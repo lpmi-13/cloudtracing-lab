@@ -1,0 +1,94 @@
+kind: playground
+name: cloud-tracing-lab-k3s
+base: k3s
+title: Cloud Tracing Lab
+description: Diagnose realistic distributed tracing scenarios in a preloaded k3s VM.
+categories:
+  - kubernetes
+  - observability
+playground:
+  networks:
+    - name: local
+      subnet: 172.16.0.0/24
+  machines:
+    - name: cplane-01
+      users:
+        - name: root
+        - name: laborant
+          default: true
+          welcome: |
+            This lab starts with the coach UI already deployed in k3s. Use the coach tab to read the scenario, then open the Jaeger tab and inspect the newest trace for the target operation.
+
+            Public tabs:
+            - coach
+            - shop
+            - jaeger
+
+            Useful local endpoints from the terminal:
+            - http://127.0.0.1:30080
+            - http://127.0.0.1:30081
+            - http://127.0.0.1:30686
+      drives:
+        - source: oci://ghcr.io/<your-user-or-org>/cloudtracing-k3s-rootfs:v1
+          mount: /
+          size: 30GiB
+      network:
+        interfaces:
+          - address: 172.16.0.2/24
+            network: local
+      resources:
+        cpuCount: 4
+        ramSize: 8GiB
+  tabs:
+    - id: terminal-cplane-01
+      kind: terminal
+      name: cplane-01
+      machine: cplane-01
+    - id: http-port-trace-coach
+      kind: http-port
+      name: coach
+      machine: cplane-01
+      number: 30080
+      access: public
+    - id: http-port-trace-shop
+      kind: http-port
+      name: shop
+      machine: cplane-01
+      number: 30081
+      access: public
+    - id: http-port-trace-jaeger
+      kind: http-port
+      name: jaeger
+      machine: cplane-01
+      number: 30686
+      access: public
+  initTasks:
+    init_cplane_01_1:
+      name: init_cplane_01_1
+      machine: cplane-01
+      init: true
+      user: root
+      timeout_seconds: 180
+      run: |-
+        #!/bin/bash
+
+        for _ in $(seq 1 120); do
+          if kubectl get namespace trace-lab >/dev/null 2>&1; then
+            if kubectl wait --for=condition=Available --timeout=5s deployment/coach -n trace-lab >/dev/null 2>&1 && \
+               kubectl wait --for=condition=Available --timeout=5s deployment/shop-web -n trace-lab >/dev/null 2>&1 && \
+               kubectl wait --for=condition=Available --timeout=5s deployment/jaeger -n trace-lab >/dev/null 2>&1; then
+              exit 0
+            fi
+          fi
+          sleep 1
+        done
+
+        echo "Cloud Tracing Lab did not become ready in time" >&2
+        exit 1
+accessControl:
+  canList:
+    - anyone
+  canRead:
+    - anyone
+  canStart:
+    - anyone

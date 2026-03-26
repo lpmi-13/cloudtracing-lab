@@ -1,0 +1,12 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coach
+spec:
+  template:
+    spec:
+      containers:
+        - name: coach
+          env:
+            - name: JAEGER_UI_URL
+              $patch: delete

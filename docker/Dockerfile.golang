@@ -1,0 +1,25 @@
+FROM golang:1.25 AS build
+
+ARG SERVICE_PATH
+ARG BINARY_NAME
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/${BINARY_NAME} ${SERVICE_PATH}
+
+FROM gcr.io/distroless/static-debian12
+
+ARG BINARY_NAME
+
+WORKDIR /app
+
+COPY --from=build /out/${BINARY_NAME} /app/service
+COPY scenarios /app/scenarios
+
+EXPOSE 8080
+
+ENTRYPOINT ["/app/service"]

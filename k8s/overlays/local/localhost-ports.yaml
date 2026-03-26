@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coach
+spec:
+  template:
+    spec:
+      containers:
+        - name: coach
+          env:
+            - name: JAEGER_UI_URL
+              value: http://localhost:9002
+          ports:
+            - containerPort: 8080
+              hostIP: 127.0.0.1
+              hostPort: 9000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shop-web
+spec:
+  template:
+    spec:
+      containers:
+        - name: shop-web
+          ports:
+            - containerPort: 8080
+              hostIP: 127.0.0.1
+              hostPort: 9001
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+spec:
+  template:
+    spec:
+      containers:
+        - name: jaeger
+          ports:
+            - containerPort: 16686
+              hostIP: 127.0.0.1
+              hostPort: 9002
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: edge-api
+          ports:
+            - containerPort: 8080
+              hostIP: 127.0.0.1
+              hostPort: 9003
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: catalog-api
+          ports:
+            - containerPort: 8080
+              hostIP: 127.0.0.1
+              hostPort: 9004
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: inventory-api
+          ports:
+            - containerPort: 8080
+              hostIP: 127.0.0.1
+              hostPort: 9005
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: orders-api
+          ports:
+            - containerPort: 8080
+              hostIP: 127.0.0.1
+              hostPort: 9006
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: payments-api
+          ports:
+            - containerPort: 8080
+              hostIP: 127.0.0.1
+              hostPort: 9007
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: meilisearch
+spec:
+  template:
+    spec:
+      containers:
+        - name: meilisearch
+          ports:
+            - containerPort: 7700
+              hostIP: 127.0.0.1
+              hostPort: 9008

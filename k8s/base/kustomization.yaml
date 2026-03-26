@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: trace-lab
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+configMapGenerator:
+  - name: trace-lab-scenarios
+    files:
+      - scenarios.json=../../scenarios/scenarios.json
+  - name: postgres-init
+    files:
+      - 01-schema.sql=../../db/init/01-schema.sql
+  - name: otel-collector-config
+    files:
+      - config.yaml=config/otel-collector.yaml
+
+resources:
+  - namespace.yaml
+  - data-stores.yaml
+  - observability.yaml
+  - applications.yaml

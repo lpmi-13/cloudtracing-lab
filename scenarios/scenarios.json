@@ -1,0 +1,94 @@
+[
+  {
+    "id": "search-full-scan",
+    "title": "Product search is slow after a catalog rollout",
+    "objective": "Use traces to identify the real component causing search latency.",
+    "prompt": "The storefront search page is timing out under modest load. Follow the request from the load balancer through the web tier, app tier, and database tier. Identify the component that is actually causing the latency, not just the component where the symptom first appears.",
+    "route": "/search",
+    "traffic_path": "/search?q=trail",
+    "focus_service": "shop-web",
+    "focus_operation": "GET /search",
+    "expected_service": "catalog-api",
+    "expected_tier": "search",
+    "expected_issue": "expensive_search_query",
+    "answer": "catalog-api / broad Meilisearch query after a Redis cache miss",
+    "services": {
+      "catalog-api": {
+        "mode": "expensive_search_query",
+        "latency_ms": 900,
+        "repeat": 1,
+        "query_label": "catalog.search.meilisearch",
+        "query_text": "{\"q\":\"trail\",\"limit\":12,\"attributesToRetrieve\":[\"sku\",\"name\",\"price\"]}"
+      }
+    }
+  },
+  {
+    "id": "checkout-n-plus-one",
+    "title": "Checkout is slow even though payment succeeds",
+    "objective": "Use traces to find the service and query pattern making checkout slow.",
+    "prompt": "A shopper can still complete checkout, but the end-to-end latency is unacceptable. Inspect the trace carefully: one downstream call is noisy but healthy, while another service is doing more database work than necessary.",
+    "route": "/checkout",
+    "traffic_path": "/checkout?sku=sku-14",
+    "focus_service": "shop-web",
+    "focus_operation": "GET /checkout",
+    "expected_service": "inventory-api",
+    "expected_tier": "database",
+    "expected_issue": "n_plus_one_queries",
+    "answer": "inventory-api / repeated stock lookup queries during reserve",
+    "services": {
+      "inventory-api": {
+        "mode": "n_plus_one_queries",
+        "latency_ms": 160,
+        "repeat": 6,
+        "query_label": "stock.reserve.n_plus_one",
+        "query_text": "select warehouse_id, quantity, reserved from stock_levels where sku = $1 and warehouse_id = $2"
+      }
+    }
+  },
+  {
+    "id": "checkout-payment-lock",
+    "title": "Checkout intermittently fails in the payment path",
+    "objective": "Use traces to identify the true root cause of checkout errors.",
+    "prompt": "Customers report sporadic checkout failures. The trace includes web-tier retries and normal inventory work. Identify the actual component creating the failure and the database behavior behind it.",
+    "route": "/checkout",
+    "traffic_path": "/checkout?sku=sku-28",
+    "focus_service": "shop-web",
+    "focus_operation": "GET /checkout",
+    "expected_service": "payments-api",
+    "expected_tier": "database",
+    "expected_issue": "lock_wait_timeout",
+    "answer": "payments-api / PostgreSQL lock wait leading to timeout",
+    "services": {
+      "payments-api": {
+        "mode": "lock_wait_timeout",
+        "latency_ms": 1200,
+        "repeat": 1,
+        "query_label": "payments.idempotency.lock_wait",
+        "query_text": "select pg_sleep(1.2)"
+      }
+    }
+  },
+  {
+    "id": "orders-history-sort",
+    "title": "Account history is slow for active users",
+    "objective": "Use traces to isolate the expensive query behind account-history latency.",
+    "prompt": "The account page loads slowly for busy customers. Follow the request from the web tier into the app tier and database spans. Pinpoint the component and query behavior creating the problem.",
+    "route": "/account/orders",
+    "traffic_path": "/account/orders?user_id=user-4",
+    "focus_service": "shop-web",
+    "focus_operation": "GET /account/orders",
+    "expected_service": "orders-api",
+    "expected_tier": "database",
+    "expected_issue": "expensive_sort",
+    "answer": "orders-api / expensive sort in order-history query",
+    "services": {
+      "orders-api": {
+        "mode": "expensive_sort",
+        "latency_ms": 850,
+        "repeat": 1,
+        "query_label": "orders.history.expensive_sort",
+        "query_text": "select order_ref, sku, total, status, created_at from orders where user_id = $1 order by total desc, created_at desc limit 20"
+      }
+    }
+  }
+]

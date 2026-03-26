@@ -1,0 +1,21 @@
+FROM python:3.10-slim
+
+ARG REQUIREMENTS
+ARG APP_MODULE
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+ENV APP_MODULE=${APP_MODULE}
+
+COPY ${REQUIREMENTS} /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+COPY python /app/python
+COPY scenarios /app/scenarios
+
+EXPOSE 8080
+
+CMD ["sh", "-c", "python -m ${APP_MODULE}"]
+

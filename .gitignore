@@ -1,0 +1,16 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+
+# Test caches
+.pytest_cache/
+.coverage
+.coverage.*
+
+# Repo-local generated overlays
+.tmp.cloudtracing-remote.*/
+
+# Editor and OS noise
+.DS_Store
+*.swp
+*.swo
