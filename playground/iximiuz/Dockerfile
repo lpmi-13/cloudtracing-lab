@@ -31,6 +31,10 @@ for cmd in bash kubectl k3s jq yq rg task just websocat btop; do
   }
 done
 
+test -x /root/.fzf/bin/fzf
+test -x /home/laborant/.fzf/bin/fzf
+grep -q "FZF_DEFAULT_COMMAND='rg --files'" /home/laborant/.bashrc
+
 ln -sf /etc/systemd/system/trace-lab-bootstrap.service \
   /etc/systemd/system/multi-user.target.wants/trace-lab-bootstrap.service
 EOF
