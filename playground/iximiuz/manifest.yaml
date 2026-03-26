@@ -1,5 +1,5 @@
 kind: playground
-name: cloud-tracing-lab-k3s
+name: cloud-tracing-lab
 base: k3s
 title: Cloud Tracing Lab
 description: Diagnose realistic distributed tracing scenarios in a preloaded k3s VM.
@@ -29,7 +29,7 @@ playground:
             - http://127.0.0.1:30081
             - http://127.0.0.1:30686
       drives:
-        - source: oci://ghcr.io/<your-user-or-org>/cloudtracing-k3s-rootfs:v1
+        - source: oci://ghcr.io/lpmi-13/cloudtracing-k3s-rootfs:v1
           mount: /
           size: 30GiB
       network:
