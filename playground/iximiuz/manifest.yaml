@@ -1,12 +1,19 @@
 kind: playground
 name: cloud-tracing-lab
-base: k3s
+base: flexbox
 title: Cloud Tracing Lab
 description: Diagnose realistic distributed tracing scenarios in a preloaded k3s VM.
 categories:
   - kubernetes
   - observability
 playground:
+  accessControl:
+    canList:
+      - owner
+    canRead:
+      - owner
+    canStart:
+      - owner
   networks:
     - name: local
       subnet: 172.16.0.0/24
@@ -85,10 +92,3 @@ playground:
 
         echo "Cloud Tracing Lab did not become ready in time" >&2
         exit 1
-accessControl:
-  canList:
-    - anyone
-  canRead:
-    - anyone
-  canStart:
-    - anyone
