@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coach
+spec:
+  template:
+    spec:
+      containers:
+        - name: coach
+          ports:
+            - containerPort: 8080
+              hostPort: 30080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shop-web
+spec:
+  template:
+    spec:
+      containers:
+        - name: shop-web
+          ports:
+            - containerPort: 8080
+              hostPort: 30081
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+spec:
+  template:
+    spec:
+      containers:
+        - name: jaeger
+          ports:
+            - containerPort: 16686
+              hostPort: 30686
+            - containerPort: 4317
+            - containerPort: 4318

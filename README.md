@@ -91,7 +91,7 @@ Use this as the quick "which script do I run?" reference:
 | `bash scripts/deploy-remote.sh` | You already published images and want to deploy them to a remote cluster with host-based ingress. | Renders a temporary remote overlay with GHCR image rewrites, ingress hosts, optional pull secret wiring, and the remote Jaeger URL for the coach, then deploys it. |
 | `bash scripts/up-remote.sh` | You want the full GHCR-based remote flow in one command. | Runs `publish-ghcr.sh` and then `deploy-remote.sh`. This is the shortest path for the generic remote-cluster workflow. |
 | `bash scripts/build-rootfs-image.sh` | You are preparing a fast-start VM or playground image and want the whole stack preloaded. | Builds a rootfs image containing the manifests plus all required container images. We need it for environments where boot speed matters more than pulling from a registry on first start. |
-| `bash scripts/deploy-preloaded-vm.sh` | You are inside the preloaded VM and want to deploy or redeploy the fixed-port VM overlay. | Deploys the VM overlay that exposes coach, shop, and Jaeger on stable NodePorts. This exists because the VM path is exposed-port-based rather than host-based ingress. |
+| `bash scripts/deploy-preloaded-vm.sh` | You are inside the preloaded VM and want to deploy or redeploy the fixed-port VM overlay. | Deploys the VM overlay that binds coach, shop, and Jaeger directly on stable VM host ports. This exists because the VM path is exposed-port-based rather than host-based ingress. |
 
 ## Local Run Commands
 
@@ -200,7 +200,7 @@ That path bakes the lab into a k3s-capable filesystem image by:
 - saving all Kubernetes images into a single archive
 - copying the lab manifests into the rootfs image
 - enabling a systemd bootstrap unit that imports the images into k3s containerd and deploys the lab on boot
-- exposing the learner-facing UIs on fixed NodePorts:
+- exposing the learner-facing UIs on fixed VM host ports:
   - coach on `30080`
   - shop on `30081`
   - jaeger on `30686`
@@ -216,7 +216,7 @@ docker push "${ROOTFS_IMAGE}"
 
 The rootfs build uses [playground/iximiuz/Dockerfile](/home/adam/projects/cloudtracing/playground/iximiuz/Dockerfile), and the bootstrap unit is [trace-lab-bootstrap.service](/home/adam/projects/cloudtracing/playground/iximiuz/image/trace-lab-bootstrap.service).
 
-Inside the VM, the bootstrap script deploys the dedicated [vm overlay](/home/adam/projects/cloudtracing/k8s/overlays/vm/kustomization.yaml), which patches the UI services to stable NodePorts. From the VM itself, the endpoints are:
+Inside the VM, the bootstrap script deploys the dedicated [vm overlay](/home/adam/projects/cloudtracing/k8s/overlays/vm/kustomization.yaml), which binds the three learner-facing UIs directly on stable VM host ports. This avoids relying on Kubernetes `NodePort` behavior for browser-driven playground port tabs. From the VM itself, the endpoints are:
 
 ```bash
 http://127.0.0.1:30080

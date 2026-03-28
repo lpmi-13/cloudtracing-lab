@@ -6,4 +6,4 @@ resources:
 
 patches:
   - path: coach-jaeger-url-remove.yaml
-  - path: nodeports.yaml
+  - path: hostports.yaml
