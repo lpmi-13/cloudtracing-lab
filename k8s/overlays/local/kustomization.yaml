@@ -7,25 +7,25 @@ resources:
 images:
   - name: cloudtracing/catalog
     newName: localhost:30300/cloudtracing/catalog
-    newTag: v1
+    newTag: latest
   - name: cloudtracing/inventory
     newName: localhost:30300/cloudtracing/inventory
-    newTag: v1
+    newTag: latest
   - name: cloudtracing/orders
     newName: localhost:30300/cloudtracing/orders
-    newTag: v1
+    newTag: latest
   - name: cloudtracing/payments
     newName: localhost:30300/cloudtracing/payments
-    newTag: v1
+    newTag: latest
   - name: cloudtracing/edge
     newName: localhost:30300/cloudtracing/edge
-    newTag: v1
+    newTag: latest
   - name: cloudtracing/shop-web
     newName: localhost:30300/cloudtracing/shop-web
-    newTag: v1
+    newTag: latest
   - name: cloudtracing/coach
     newName: localhost:30300/cloudtracing/coach
-    newTag: v1
+    newTag: latest
 
 patches:
   - path: image-pull-policy.yaml

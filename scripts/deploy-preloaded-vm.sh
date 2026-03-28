@@ -11,5 +11,5 @@ KUSTOMIZE_DIR="k8s/overlays/vm" TRACE_LAB_NAMESPACE="${namespace}" bash "${repo_
 echo
 echo "Cluster is ready:"
 echo "  coach:  http://127.0.0.1:30080"
-echo "  shop:   http://127.0.0.1:30081"
 echo "  jaeger: http://127.0.0.1:30686"
+echo "  shop:   http://127.0.0.1:30081 (optional manual storefront)"

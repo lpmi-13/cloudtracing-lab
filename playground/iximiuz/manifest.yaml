@@ -28,12 +28,10 @@ playground:
 
             Built-in tabs:
             - coach
-            - shop
             - jaeger
 
             Useful local endpoints from the terminal:
             - http://127.0.0.1:30080
-            - http://127.0.0.1:30081
             - http://127.0.0.1:30686
       drives:
         - source: oci://ghcr.io/lpmi-13/cloudtracing-k3s-rootfs:v2
@@ -56,11 +54,6 @@ playground:
       name: coach
       machine: cplane-01
       number: 30080
-    - id: http-port-trace-shop
-      kind: http-port
-      name: shop
-      machine: cplane-01
-      number: 30081
     - id: http-port-trace-jaeger
       kind: http-port
       name: jaeger

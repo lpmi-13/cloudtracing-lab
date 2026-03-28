@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
-image_tag="${IMAGE_TAG:-v1}"
+image_tag="${IMAGE_TAG:-latest}"
 
 docker build -f docker/Dockerfile.golang --build-arg SERVICE_PATH=./cmd/coach --build-arg BINARY_NAME=coach -t "cloudtracing/coach:${image_tag}" .
 docker build -f docker/Dockerfile.golang --build-arg SERVICE_PATH=./cmd/edge --build-arg BINARY_NAME=edge -t "cloudtracing/edge:${image_tag}" .

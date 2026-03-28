@@ -19,6 +19,8 @@ type Definition struct {
 	Title           string               `json:"title"`
 	Objective       string               `json:"objective"`
 	Prompt          string               `json:"prompt"`
+	Hint1           string               `json:"hint_1"`
+	Hint2           string               `json:"hint_2"`
 	Route           string               `json:"route"`
 	TrafficPath     string               `json:"traffic_path"`
 	FocusService    string               `json:"focus_service"`

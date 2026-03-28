@@ -15,9 +15,6 @@ import (
 
 	"cloudtracing/internal/app"
 	"cloudtracing/internal/scenario"
-	"cloudtracing/pkg/telemetry"
-
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 type coachServer struct {
@@ -37,6 +34,8 @@ type publicScenario struct {
 	Title          string `json:"title"`
 	Objective      string `json:"objective"`
 	Prompt         string `json:"prompt"`
+	Hint1          string `json:"hint_1"`
+	Hint2          string `json:"hint_2"`
 	Route          string `json:"route"`
 	TrafficPath    string `json:"traffic_path"`
 	FocusService   string `json:"focus_service"`
@@ -57,13 +56,6 @@ type gradeRequest struct {
 const defaultTraceBatchSize = 5
 
 func main() {
-	ctx := context.Background()
-	shutdown, err := telemetry.Init(ctx, "coach")
-	if err != nil {
-		log.Fatalf("init telemetry: %v", err)
-	}
-	defer shutdown(context.Background())
-
 	scenarios, err := app.LoadScenarios()
 	if err != nil {
 		log.Fatalf("load scenarios: %v", err)
@@ -86,10 +78,10 @@ func main() {
 	s.current = s.pickRandom("")
 
 	mux := http.NewServeMux()
-	mux.Handle("/", otelhttp.NewHandler(http.HandlerFunc(s.index), "GET /"))
-	mux.Handle("/api/scenarios/random", otelhttp.NewHandler(http.HandlerFunc(s.randomScenario), "GET /api/scenarios/random"))
-	mux.Handle("/api/traffic", otelhttp.NewHandler(http.HandlerFunc(s.generateTraffic), "POST /api/traffic"))
-	mux.Handle("/api/grade", otelhttp.NewHandler(http.HandlerFunc(s.grade), "POST /api/grade"))
+	mux.Handle("/", http.HandlerFunc(s.index))
+	mux.Handle("/api/scenarios/random", http.HandlerFunc(s.randomScenario))
+	mux.Handle("/api/traffic", http.HandlerFunc(s.generateTraffic))
+	mux.Handle("/api/grade", http.HandlerFunc(s.grade))
 	mux.Handle("/healthz", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
@@ -311,6 +303,8 @@ func (s *coachServer) toPublic(def scenario.Definition) publicScenario {
 		Title:          def.Title,
 		Objective:      def.Objective,
 		Prompt:         def.Prompt,
+		Hint1:          def.Hint1,
+		Hint2:          def.Hint2,
 		Route:          def.Route,
 		TrafficPath:    def.TrafficPath,
 		FocusService:   def.FocusService,
@@ -398,6 +392,10 @@ const pageTemplate = `
         cursor: pointer;
         text-decoration: none;
       }
+      button:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
       select {
         width: 100%;
         padding: 10px 12px;
@@ -415,6 +413,12 @@ const pageTemplate = `
       #feedback.ok {
         background: #dceedd;
         color: var(--success);
+      }
+      #hint-box {
+        min-height: 72px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: #f3ede3;
       }
       .actions {
         display: flex;
@@ -464,6 +468,14 @@ const pageTemplate = `
             <p class="muted">1. Read the scenario. 2. Open the separately exposed Jaeger UI. 3. Inspect the newest trace for the focus operation. 4. Identify the true culprit service and issue type. 5. Submit. 6. Repeat.</p>
             {{end}}
           </div>
+          <div>
+            <strong>Need a hint?</strong>
+            <p class="muted">Use hints only if you are stuck moving from the entry span to the next service layer.</p>
+            <div id="hint-box" class="muted">No hint revealed yet.</div>
+            <div class="actions">
+              <button id="hint" type="button">Show Hint</button>
+            </div>
+          </div>
         </article>
         <aside class="panel stack">
           <div>
@@ -491,11 +503,49 @@ const pageTemplate = `
     <script>
       const initialScenario = {{.InitialScenario}};
       let current = initialScenario;
+      let hintLevel = 0;
 
       function setFeedback(message, ok = false) {
         const box = document.getElementById("feedback");
         box.textContent = message;
         box.className = ok ? "ok" : "";
+      }
+
+      function hintsForCurrent() {
+        return [current.hint_1, current.hint_2].filter(Boolean);
+      }
+
+      function renderHints() {
+        const hints = hintsForCurrent();
+        const box = document.getElementById("hint-box");
+        const button = document.getElementById("hint");
+
+        if (hints.length === 0) {
+          box.textContent = "No hints are configured for this scenario.";
+          button.disabled = true;
+          button.textContent = "Hints Unavailable";
+          return;
+        }
+
+        if (hintLevel === 0) {
+          box.textContent = "No hint revealed yet.";
+          button.disabled = false;
+          button.textContent = "Show Hint";
+          return;
+        }
+
+        const level = Math.min(hintLevel, hints.length);
+        box.textContent = "Hint " + level + ": " + hints[level-1];
+        button.disabled = level >= hints.length;
+        button.textContent = level >= hints.length ? "No More Hints" : "Show Another Hint";
+      }
+
+      function showHint() {
+        const hints = hintsForCurrent();
+        if (hintLevel < hints.length) {
+          hintLevel++;
+          renderHints();
+        }
       }
 
       function render() {
@@ -504,6 +554,8 @@ const pageTemplate = `
         document.getElementById("prompt").textContent = current.prompt;
         document.getElementById("focus-service").textContent = current.focus_service;
         document.getElementById("focus-operation").textContent = current.focus_operation;
+        hintLevel = 0;
+        renderHints();
       }
 
       async function randomize(exclude = "") {
@@ -551,6 +603,7 @@ const pageTemplate = `
       }
 
       document.getElementById("skip").addEventListener("click", () => randomize(current.id));
+      document.getElementById("hint").addEventListener("click", showHint);
       document.getElementById("submit").addEventListener("click", submit);
       render();
     </script>

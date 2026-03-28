@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
 local_registry="localhost:30300"
-image_tag="${IMAGE_TAG:-v1}"
+image_tag="${IMAGE_TAG:-latest}"
 registry_container_name="cloudtracing-registry"
 registry_container_image="registry:2"
 registry_api_url="http://${local_registry}/v2/"

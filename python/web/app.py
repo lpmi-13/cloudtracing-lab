@@ -1,3 +1,4 @@
+import json
 import os
 
 import requests
@@ -81,11 +82,16 @@ PAGE = """
         color: var(--muted);
       }
       pre {
-        white-space: pre-wrap;
+        white-space: pre;
+        overflow: auto;
         background: #f1eadb;
         padding: 14px;
         border-radius: 12px;
         border: 1px solid var(--border);
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 13px;
+        line-height: 1.45;
+        max-height: 280px;
       }
     </style>
   </head>
@@ -143,6 +149,13 @@ def edge_headers(scenario_id: str):
     return inject_headers(headers)
 
 
+def format_response_payload(response: requests.Response) -> str:
+    try:
+        return json.dumps(response.json(), indent=2)
+    except ValueError:
+        return response.text
+
+
 @app.route("/")
 def home():
     return render_template_string(PAGE, scenario=request.args.get("scenario", ""), q="", sku="", user_id="")
@@ -168,7 +181,7 @@ def search():
             PAGE,
             scenario=scenario_id,
             q=q,
-            search_result=response.text,
+            search_result=format_response_payload(response),
             sku="",
             user_id="",
         )
@@ -190,7 +203,7 @@ def checkout():
             scenario=scenario_id,
             q="",
             sku=sku,
-            checkout_result=response.text,
+            checkout_result=format_response_payload(response),
             user_id="",
         )
 
@@ -212,7 +225,7 @@ def order_history():
             q="",
             sku="",
             user_id=user_id,
-            history_result=response.text,
+            history_result=format_response_payload(response),
         )
 
 

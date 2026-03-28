@@ -325,8 +325,6 @@ spec:
           image: cloudtracing/coach:v1
           imagePullPolicy: IfNotPresent
           env:
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: otel-collector:4318
             - name: SCENARIO_FILE
               value: /config/scenarios.json
             - name: WEB_URL

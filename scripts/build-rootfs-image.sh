@@ -47,8 +47,8 @@ copy_dir() {
 }
 
 if [[ "${build_images}" != "0" ]]; then
-  echo "Building application images..."
-  bash "${repo_root}/scripts/build-images.sh"
+  echo "Building application images as ${app_image_tag}..."
+  IMAGE_TAG="${app_image_tag}" bash "${repo_root}/scripts/build-images.sh"
 fi
 
 if [[ "${pull_runtime_images}" != "0" ]]; then

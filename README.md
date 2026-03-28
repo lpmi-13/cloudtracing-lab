@@ -33,15 +33,15 @@ Supporting services:
 - `jaeger`
 - `coach` for learner guidance, grading, and randomized scenario progression
 
-## Progress So Far
+## Current State
 
-- the mixed-language service scaffold is in place
-- the scenario catalog and grading loop are implemented
-- the search flow uses Redis and Meilisearch, while the transactional flows use PostgreSQL
-- Kubernetes manifests and image build/load/deploy scripts are present
-- repo-level validation has been run for Go, Python, shell scripts, and rendered Kubernetes manifests
-- local Docker images have been built successfully
-- the remaining environment-dependent step is pushing those images to the local registry that `k3s` trusts and applying the manifests
+- the learner loop is end to end: the coach picks a scenario, seeds fresh traffic automatically, grades answers, and advances after a correct diagnosis
+- the coach UI now includes lightweight progressive hints that help learners move from the entry span to the next service layer without revealing the answer
+- the application tier covers four trace patterns: broad search queries, inventory N+1 work, payment lock waits, and expensive order-history sorts
+- the optional shop UI remains available for manual storefront traffic, but the core activity is now coach + Jaeger
+- the local path is `bash scripts/up.sh`, which builds local `:latest` images, pushes them to the trusted registry, applies the local overlay, and waits for rollout
+- the remote path is `bash scripts/publish-ghcr.sh` plus `bash scripts/deploy-remote.sh`, or simply `bash scripts/up-remote.sh`
+- the preloaded VM/rootfs path is still available for iximiuz-style playgrounds and fast-start environments
 
 ## Scenario Types
 
@@ -84,12 +84,12 @@ Use this as the quick "which script do I run?" reference:
 | Script | Run it when | What it does and why it exists |
 | --- | --- | --- |
 | `bash scripts/up.sh` | You want the normal one-command local bring-up. | Runs the full local flow: build app images, push them to the trusted local registry, deploy the local overlay, bind the local HTTP services to `localhost`, and wait for rollout. This is the default local entry point. |
-| `bash scripts/build-images.sh` | You changed app code or Dockerfiles and need fresh first-party images. | Builds the Go and Python app images as `cloudtracing/*:${IMAGE_TAG:-v1}`. This exists so image creation is consistent across local, remote, and rootfs flows. |
+| `bash scripts/build-images.sh` | You changed app code or Dockerfiles and need fresh first-party images. | Builds the Go and Python app images as `cloudtracing/*:${IMAGE_TAG:-latest}` for the normal local flow. This exists so image creation is consistent across local, remote, and rootfs flows. |
 | `bash scripts/load-images.sh` | You built local images and want `k3s` to be able to pull them. | Starts the local registry on `localhost:30300` if needed, then tags and pushes the app images there. We need it because local `k3s` does not read images directly from the host Docker daemon. |
-| `bash scripts/deploy.sh` | You changed Kubernetes manifests, changed overlays, or loaded fresh images and want them live. | Applies the selected kustomize overlay, removes legacy OpenSearch resources, restarts app deployments, and waits for rollout. We need it because a same-tag image update like `:v1` does not reliably refresh pods on `kubectl apply` alone. |
-| `bash scripts/publish-ghcr.sh` | You want to run the lab on a remote cluster that pulls from GHCR. | Publishes the first-party app images to `ghcr.io/.../cloudtracing/*:${IMAGE_TAG}` and optionally mirrors third-party runtime images too. This exists because a remote cluster cannot use your local images. |
-| `bash scripts/deploy-remote.sh` | You already published images and want to deploy them to a remote cluster with host-based ingress. | Renders a temporary remote overlay with GHCR image rewrites, ingress hosts, optional pull secret wiring, and the remote Jaeger URL for the coach, then deploys it. |
-| `bash scripts/up-remote.sh` | You want the full GHCR-based remote flow in one command. | Runs `publish-ghcr.sh` and then `deploy-remote.sh`. This is the shortest path for the generic remote-cluster workflow. |
+| `bash scripts/deploy.sh` | You changed Kubernetes manifests, changed overlays, or loaded fresh images and want them live. | Applies the selected kustomize overlay, removes legacy OpenSearch resources, restarts app deployments, and waits for rollout. We need it because a same-tag image update like `:latest` does not reliably refresh pods on `kubectl apply` alone. |
+| `bash scripts/publish-ghcr.sh` | You want to run the lab on a remote cluster that pulls from GHCR. | Publishes the first-party app images to `ghcr.io/.../cloudtracing/*:${IMAGE_TAG}` and optionally mirrors third-party runtime images too. If `IMAGE_TAG` is unset, it prompts for a tag and suggests the next `vN` based on the current GHCR app-image tags. |
+| `bash scripts/deploy-remote.sh` | You already published images and want to deploy them to a remote cluster with host-based ingress. | Renders a temporary remote overlay with GHCR image rewrites, ingress hosts, optional pull secret wiring, and the remote Jaeger URL for the coach, then deploys it. Set `IMAGE_TAG` to the same tag you just published. |
+| `bash scripts/up-remote.sh` | You want the full GHCR-based remote flow in one command. | Runs `publish-ghcr.sh` and then `deploy-remote.sh`, carrying the chosen publish tag into the deploy step automatically. This is the shortest path for the generic remote-cluster workflow. |
 | `bash scripts/build-rootfs-image.sh` | You are preparing a fast-start VM or playground image and want the whole stack preloaded. | Builds a rootfs image containing the manifests plus all required container images. We need it for environments where boot speed matters more than pulling from a registry on first start. |
 | `bash scripts/deploy-preloaded-vm.sh` | You are inside the preloaded VM and want to deploy or redeploy the fixed-port VM overlay. | Deploys the VM overlay that binds coach, shop, and Jaeger directly on stable VM host ports. This exists because the VM path is exposed-port-based rather than host-based ingress. |
 
@@ -106,7 +106,7 @@ That command:
 - builds the application images with Docker
 - pushes them to the local registry on `localhost:30300`
 - applies the local `k3s` manifests
-- restarts the application deployments so refreshed local `:v1` images are re-pulled
+- restarts the application deployments so refreshed local `:latest` images are re-pulled
 - waits for the `trace-lab` deployments to finish rolling out
 
 If you want to run the steps manually, use:
@@ -120,8 +120,11 @@ bash scripts/deploy.sh
 After the deploy completes, open:
 
 - `http://localhost:9000` for the coach UI
-- `http://localhost:9001` for the shop UI
 - `http://localhost:9002` for Jaeger
+
+Optional manual storefront/debug surface:
+
+- `http://localhost:9001` for the shop UI
 
 Note: this machine's `k3s` setup already trusts a local registry at `localhost:30300`. `scripts/load-images.sh` starts that registry if needed and pushes the app images there, so the normal local build/load/deploy flow does not require `sudo`.
 
@@ -140,8 +143,9 @@ The local overlay also binds the internal HTTP services to fixed loopback ports 
 2. Open `http://localhost:9002` and look for the newest trace for the route the coach asked you to investigate.
 3. Start at the web tier span, then follow the request downstream through `edge-api` into the backing service spans.
 4. Identify the component creating the real slowdown or failure, not just the first upstream service that noticed it. Pay close attention to long database, Redis, or Meilisearch spans.
-5. Go back to the coach UI and submit the culprit service plus issue type. If you are wrong, the coach automatically seeds another fresh batch for the same scenario.
-6. Repeat until you solve it or randomize to a new scenario.
+5. If you get stuck moving from the entry span into the real suspect branch, use the `Need a hint?` panel in the coach UI for a minimal nudge.
+6. Go back to the coach UI and submit the culprit service plus issue type. If you are wrong, the coach automatically seeds another fresh batch for the same scenario.
+7. Repeat until you solve it or randomize to a new scenario.
 
 If you want to explore the storefront manually alongside the guided activity, `http://localhost:9001` still exposes search, checkout, and account-history flows, but the coach no longer depends on manual trace generation.
 
@@ -156,7 +160,7 @@ For this repo there are multiple first-party services, plus optional runtime dep
 ```bash
 export GHCR_NAMESPACE=ghcr.io/<your-user-or-org>
 export TRACE_LAB_BASE_DOMAIN=<public-ip>.sslip.io
-export IMAGE_TAG=$(date -u +%Y%m%d%H%M%S)
+export IMAGE_TAG=v5
 
 bash scripts/publish-ghcr.sh
 bash scripts/deploy-remote.sh
@@ -182,6 +186,8 @@ That remote path:
 Notes:
 
 - Run `docker login ghcr.io` before publishing.
+- If `IMAGE_TAG` is unset, `scripts/publish-ghcr.sh` prompts for a tag and suggests the next `vN` found across the existing GHCR app images.
+- If you run `scripts/deploy-remote.sh` separately after publishing, export the same chosen `IMAGE_TAG` first. `scripts/up-remote.sh` handles that handoff for you automatically.
 - `TRACE_LAB_BASE_DOMAIN` is only needed for the generic host-based ingress flow in `scripts/deploy-remote.sh`.
 - The remote cluster should have Traefik or another ingress controller available at the `traefik` ingress class.
 - If you want the cluster to keep pulling upstream images directly instead of mirroring them into GHCR, set `MIRROR_UPSTREAM_IMAGES=0` for both scripts.
@@ -200,10 +206,10 @@ That path bakes the lab into a k3s-capable filesystem image by:
 - saving all Kubernetes images into a single archive
 - copying the lab manifests into the rootfs image
 - enabling a systemd bootstrap unit that imports the images into k3s containerd and deploys the lab on boot
-- exposing the learner-facing UIs on fixed VM host ports:
+- exposing the main learner-facing UIs plus the optional storefront debug UI on fixed VM host ports:
   - coach on `30080`
-  - shop on `30081`
   - jaeger on `30686`
+  - shop on `30081` for manual storefront traffic if you need it
 
 Build it with:
 
@@ -216,7 +222,7 @@ docker push "${ROOTFS_IMAGE}"
 
 The rootfs build uses [playground/iximiuz/Dockerfile](/home/adam/projects/cloudtracing/playground/iximiuz/Dockerfile), and the bootstrap unit is [trace-lab-bootstrap.service](/home/adam/projects/cloudtracing/playground/iximiuz/image/trace-lab-bootstrap.service).
 
-Inside the VM, the bootstrap script deploys the dedicated [vm overlay](/home/adam/projects/cloudtracing/k8s/overlays/vm/kustomization.yaml), which binds the three learner-facing UIs directly on stable VM host ports. This avoids relying on Kubernetes `NodePort` behavior for browser-driven playground port tabs. From the VM itself, the endpoints are:
+Inside the VM, the bootstrap script deploys the dedicated [vm overlay](/home/adam/projects/cloudtracing/k8s/overlays/vm/kustomization.yaml), which binds coach, Jaeger, and the optional shop debug UI directly on stable VM host ports. This avoids relying on Kubernetes `NodePort` behavior for browser-driven playground port tabs. From the VM itself, the endpoints are:
 
 ```bash
 http://127.0.0.1:30080
@@ -224,6 +230,6 @@ http://127.0.0.1:30081
 http://127.0.0.1:30686
 ```
 
-For iximiuz, expose those same ports publicly in the playground manifest. A starter manifest is included at [playground/iximiuz/manifest.yaml](/home/adam/projects/cloudtracing/playground/iximiuz/manifest.yaml); update the OCI image reference before using it.
+For iximiuz, expose coach and Jaeger publicly in the playground manifest, and only expose shop if you want manual storefront debugging available to learners. A starter manifest is included at [playground/iximiuz/manifest.yaml](/home/adam/projects/cloudtracing/playground/iximiuz/manifest.yaml); update the OCI image reference before using it.
 
 The bootstrap script lives at [bootstrap-trace-lab.sh](/home/adam/projects/cloudtracing/playground/iximiuz/image/bootstrap-trace-lab.sh), and the in-VM deploy path it calls is [deploy-preloaded-vm.sh](/home/adam/projects/cloudtracing/scripts/deploy-preloaded-vm.sh).
