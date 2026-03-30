@@ -177,9 +177,6 @@ EOF
   - name: jaegertracing/all-in-one
     newName: ${ghcr_namespace}/cloudtracing-third-party/jaeger-all-in-one
     newTag: "1.75.0"
-  - name: otel/opentelemetry-collector-contrib
-    newName: ${ghcr_namespace}/cloudtracing-third-party/opentelemetry-collector-contrib
-    newTag: "0.143.0"
 EOF
   fi
 
@@ -192,7 +189,7 @@ EOF
 } >"${tmpdir}/kustomization.yaml"
 
 echo "Deploying remote overlay for ${coach_host}, ${shop_host}, and ${jaeger_host}..."
-KUSTOMIZE_DIR="${tmpdir}" TRACE_LAB_NAMESPACE="${namespace}" bash "${repo_root}/scripts/deploy.sh"
+APPS= KUSTOMIZE_DIR="${tmpdir}" TRACE_LAB_NAMESPACE="${namespace}" bash "${repo_root}/scripts/deploy.sh"
 
 echo
 echo "Cluster is ready:"

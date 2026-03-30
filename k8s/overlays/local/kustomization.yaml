@@ -30,3 +30,4 @@ images:
 patches:
   - path: image-pull-policy.yaml
   - path: localhost-ports.yaml
+  - path: hostport-recreate.yaml

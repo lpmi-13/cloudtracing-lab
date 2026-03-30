@@ -18,13 +18,13 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_DSN
-              value: postgres://lab:lab@postgres:5432/lab?sslmode=disable
+              value: postgres://lab:lab@$(POSTGRES_SERVICE_HOST):$(POSTGRES_SERVICE_PORT)/lab?sslmode=disable
             - name: REDIS_ADDR
-              value: redis:6379
+              value: $(REDIS_SERVICE_HOST):$(REDIS_SERVICE_PORT)
             - name: MEILISEARCH_URL
               value: http://$(MEILISEARCH_SERVICE_HOST):$(MEILISEARCH_SERVICE_PORT)
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: otel-collector:4318
+              value: $(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_OTLP_HTTP)
             - name: SCENARIO_FILE
               value: /config/scenarios.json
           ports:
@@ -75,9 +75,9 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_DSN
-              value: postgres://lab:lab@postgres:5432/lab?sslmode=disable
+              value: postgres://lab:lab@$(POSTGRES_SERVICE_HOST):$(POSTGRES_SERVICE_PORT)/lab?sslmode=disable
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: otel-collector:4318
+              value: $(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_OTLP_HTTP)
             - name: SCENARIO_FILE
               value: /config/scenarios.json
           ports:
@@ -128,9 +128,9 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_DSN
-              value: postgres://lab:lab@postgres:5432/lab?sslmode=disable
+              value: postgres://lab:lab@$(POSTGRES_SERVICE_HOST):$(POSTGRES_SERVICE_PORT)/lab?sslmode=disable
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: otel-collector:4318
+              value: $(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_OTLP_HTTP)
             - name: SCENARIO_FILE
               value: /config/scenarios.json
           ports:
@@ -181,9 +181,9 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_DSN
-              value: postgresql://lab:lab@postgres:5432/lab?sslmode=disable
+              value: postgresql://lab:lab@$(POSTGRES_SERVICE_HOST):$(POSTGRES_SERVICE_PORT)/lab?sslmode=disable
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
-              value: http://otel-collector:4318/v1/traces
+              value: http://$(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_OTLP_HTTP)/v1/traces
             - name: SCENARIO_FILE
               value: /config/scenarios.json
           ports:
@@ -234,15 +234,15 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: CATALOG_URL
-              value: http://catalog-api:8080
+              value: http://$(CATALOG_API_SERVICE_HOST):$(CATALOG_API_SERVICE_PORT)
             - name: INVENTORY_URL
-              value: http://inventory-api:8080
+              value: http://$(INVENTORY_API_SERVICE_HOST):$(INVENTORY_API_SERVICE_PORT)
             - name: ORDERS_URL
-              value: http://orders-api:8080
+              value: http://$(ORDERS_API_SERVICE_HOST):$(ORDERS_API_SERVICE_PORT)
             - name: PAYMENTS_URL
-              value: http://payments-api:8080
+              value: http://$(PAYMENTS_API_SERVICE_HOST):$(PAYMENTS_API_SERVICE_PORT)
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: otel-collector:4318
+              value: $(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_OTLP_HTTP)
           ports:
             - containerPort: 8080
           readinessProbe:
@@ -283,9 +283,9 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: EDGE_URL
-              value: http://edge-api:8080
+              value: http://$(EDGE_API_SERVICE_HOST):$(EDGE_API_SERVICE_PORT)
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
-              value: http://otel-collector:4318/v1/traces
+              value: http://$(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_OTLP_HTTP)/v1/traces
           ports:
             - containerPort: 8080
           readinessProbe:
@@ -328,7 +328,7 @@ spec:
             - name: SCENARIO_FILE
               value: /config/scenarios.json
             - name: WEB_URL
-              value: http://shop-web:8080
+              value: http://$(SHOP_WEB_SERVICE_HOST):$(SHOP_WEB_SERVICE_PORT)
           ports:
             - containerPort: 8080
           readinessProbe:

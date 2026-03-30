@@ -3,22 +3,19 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
+source "${repo_root}/scripts/lib/apps.sh"
 
 local_registry="localhost:30300"
 image_tag="${IMAGE_TAG:-latest}"
 registry_container_name="cloudtracing-registry"
 registry_container_image="registry:2"
 registry_api_url="http://${local_registry}/v2/"
+resolve_requested_apps "$@"
 
-images=(
-  "cloudtracing/coach:${image_tag}"
-  "cloudtracing/edge:${image_tag}"
-  "cloudtracing/catalog:${image_tag}"
-  "cloudtracing/inventory:${image_tag}"
-  "cloudtracing/orders:${image_tag}"
-  "cloudtracing/shop-web:${image_tag}"
-  "cloudtracing/payments:${image_tag}"
-)
+images=()
+for app in "${resolved_apps[@]}"; do
+  images+=("cloudtracing/${app}:${image_tag}")
+done
 
 wait_for_registry() {
   local attempt

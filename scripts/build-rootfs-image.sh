@@ -26,7 +26,6 @@ runtime_images=(
   redis:8.4.0-alpine
   getmeili/meilisearch:v1.15
   jaegertracing/all-in-one:1.75.0
-  otel/opentelemetry-collector-contrib:0.143.0
 )
 
 ensure_image() {
@@ -48,7 +47,7 @@ copy_dir() {
 
 if [[ "${build_images}" != "0" ]]; then
   echo "Building application images as ${app_image_tag}..."
-  IMAGE_TAG="${app_image_tag}" bash "${repo_root}/scripts/build-images.sh"
+  APPS= IMAGE_TAG="${app_image_tag}" bash "${repo_root}/scripts/build-images.sh"
 fi
 
 if [[ "${pull_runtime_images}" != "0" ]]; then

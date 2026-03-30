@@ -13,9 +13,6 @@ configMapGenerator:
   - name: postgres-init
     files:
       - 01-schema.sql=../../db/init/01-schema.sql
-  - name: otel-collector-config
-    files:
-      - config.yaml=config/otel-collector.yaml
 
 resources:
   - namespace.yaml

@@ -29,7 +29,6 @@ The MVP focuses on activity-level deliberate practice. Flame graphs are left as 
 
 Supporting services:
 
-- `otel-collector`
 - `jaeger`
 - `coach` for learner guidance, grading, and randomized scenario progression
 
@@ -39,7 +38,7 @@ Supporting services:
 - the coach UI now includes lightweight progressive hints that help learners move from the entry span to the next service layer without revealing the answer
 - the application tier covers four trace patterns: broad search queries, inventory N+1 work, payment lock waits, and expensive order-history sorts
 - the optional shop UI remains available for manual storefront traffic, but the core activity is now coach + Jaeger
-- the local path is `bash scripts/up.sh`, which builds local `:latest` images, pushes them to the trusted registry, applies the local overlay, and waits for rollout
+- the local path is `bash scripts/up.sh`, which tears the lab down, rebuilds local `:latest` images, pushes them to the trusted registry, applies the local overlay, and waits for rollout
 - the remote path is `bash scripts/publish-ghcr.sh` plus `bash scripts/deploy-remote.sh`, or simply `bash scripts/up-remote.sh`
 - the preloaded VM/rootfs path is still available for iximiuz-style playgrounds and fast-start environments
 
@@ -59,8 +58,8 @@ Initial faults:
 1. The coach UI picks a scenario at random and automatically seeds fresh traffic into the web tier.
 2. The learner opens Jaeger and inspects the newest trace for the target route.
 3. The learner submits the suspected culprit service and issue type in the coach UI.
-4. If the diagnosis is wrong, the coach UI seeds another fresh batch of traces for the same scenario.
-5. If the diagnosis is correct, the coach UI immediately advances to a new random scenario and seeds the next batch automatically.
+4. If the diagnosis is wrong, the current scenario stays in place so the learner can keep inspecting the latest trace or start a new scenario manually.
+5. If the diagnosis is correct, the coach UI immediately advances to a new random scenario and seeds the next trace automatically.
 6. The loop continues until the learner decides to stop.
 
 ## Repo Layout
@@ -84,6 +83,8 @@ Use this as the quick "which script do I run?" reference:
 | Script | Run it when | What it does and why it exists |
 | --- | --- | --- |
 | `bash scripts/up.sh` | You want the normal one-command local bring-up. | Runs the full local flow: build app images, push them to the trusted local registry, deploy the local overlay, bind the local HTTP services to `localhost`, and wait for rollout. This is the default local entry point. |
+| `bash scripts/refresh-local-app.sh coach` | You changed one or a few app images and want the fastest local refresh without tearing the namespace down. | Rebuilds only the selected app images, pushes only those tags to the local registry, and restarts only the matching deployments. This exists for quick iteration on things like the coach UI. |
+| `bash scripts/down.sh` | You want to remove the local lab before a clean retry or before leaving the cluster idle. | Deletes the `trace-lab` namespace and waits for it to disappear, so the next local run starts from a clean slate. |
 | `bash scripts/build-images.sh` | You changed app code or Dockerfiles and need fresh first-party images. | Builds the Go and Python app images as `cloudtracing/*:${IMAGE_TAG:-latest}` for the normal local flow. This exists so image creation is consistent across local, remote, and rootfs flows. |
 | `bash scripts/load-images.sh` | You built local images and want `k3s` to be able to pull them. | Starts the local registry on `localhost:30300` if needed, then tags and pushes the app images there. We need it because local `k3s` does not read images directly from the host Docker daemon. |
 | `bash scripts/deploy.sh` | You changed Kubernetes manifests, changed overlays, or loaded fresh images and want them live. | Applies the selected kustomize overlay, removes legacy OpenSearch resources, restarts app deployments, and waits for rollout. We need it because a same-tag image update like `:latest` does not reliably refresh pods on `kubectl apply` alone. |
@@ -103,6 +104,7 @@ bash scripts/up.sh
 
 That command:
 
+- deletes the existing `trace-lab` namespace first so every local run starts clean
 - builds the application images with Docker
 - pushes them to the local registry on `localhost:30300`
 - applies the local `k3s` manifests
@@ -115,6 +117,18 @@ If you want to run the steps manually, use:
 bash scripts/build-images.sh
 bash scripts/load-images.sh
 bash scripts/deploy.sh
+```
+
+If you only changed one app and the cluster is already up, use the faster targeted path instead of rebuilding everything:
+
+```bash
+bash scripts/refresh-local-app.sh coach
+```
+
+You can pass more than one app name, for example:
+
+```bash
+bash scripts/refresh-local-app.sh coach shop-web
 ```
 
 After the deploy completes, open:
@@ -139,17 +153,17 @@ The local overlay also binds the internal HTTP services to fixed loopback ports 
 
 ## Start The Investigation
 
-1. Open `http://localhost:9000` first and read the active scenario title, objective, and route. The coach automatically seeds a fresh batch of traces as soon as the scenario loads.
+1. Open `http://localhost:9000` first and read the active scenario title, objective, and route. The coach automatically seeds a fresh trace as soon as the scenario loads.
 2. Open `http://localhost:9002` and look for the newest trace for the route the coach asked you to investigate.
 3. Start at the web tier span, then follow the request downstream through `edge-api` into the backing service spans.
 4. Identify the component creating the real slowdown or failure, not just the first upstream service that noticed it. Pay close attention to long database, Redis, or Meilisearch spans.
 5. If you get stuck moving from the entry span into the real suspect branch, use the `Need a hint?` panel in the coach UI for a minimal nudge.
-6. Go back to the coach UI and submit the culprit service plus issue type. If you are wrong, the coach automatically seeds another fresh batch for the same scenario.
-7. Repeat until you solve it or randomize to a new scenario.
+6. Go back to the coach UI and submit the culprit service plus issue type. If you are wrong, the current scenario stays in place; if you want a fresh trace, click `New Scenario`.
+7. Repeat until you solve it or move to a new scenario.
 
 If you want to explore the storefront manually alongside the guided activity, `http://localhost:9001` still exposes search, checkout, and account-history flows, but the coach no longer depends on manual trace generation.
 
-Reloading the coach page does not rotate the activity. The active scenario only changes when the backend advances to the next activity after a correct answer or when you click `Randomize Scenario`.
+Reloading the coach page does not rotate the activity. The active scenario only changes when the backend advances to the next activity after a correct answer or when you click `New Scenario`.
 
 ## Remote VM Workflow
 

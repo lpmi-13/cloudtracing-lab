@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -53,7 +55,11 @@ type gradeRequest struct {
 	SuspectedIssue   string `json:"suspected_issue"`
 }
 
-const defaultTraceBatchSize = 5
+// One fresh trace is enough because the learner always inspects the newest trace.
+const defaultTraceBatchSize = 1
+
+//go:embed favicon.ico
+var coachFavicon []byte
 
 func main() {
 	scenarios, err := app.LoadScenarios()
@@ -82,6 +88,7 @@ func main() {
 	mux.Handle("/api/scenarios/random", http.HandlerFunc(s.randomScenario))
 	mux.Handle("/api/traffic", http.HandlerFunc(s.generateTraffic))
 	mux.Handle("/api/grade", http.HandlerFunc(s.grade))
+	mux.Handle("/favicon.ico", http.HandlerFunc(serveFavicon))
 	mux.Handle("/healthz", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
@@ -101,7 +108,7 @@ func (s *coachServer) index(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		feedback = "The current scenario is loaded, but automatic trace generation failed. Refresh the page and try again."
 	} else if generated > 0 {
-		feedback = fmt.Sprintf("Generated %d fresh traces for %s. Open Jaeger and inspect the newest trace.", generated, selected.Route)
+		feedback = fmt.Sprintf("Generated %s for %s. Open Jaeger and inspect the newest trace.", freshTraceText(generated), selected.Route)
 	}
 
 	data := map[string]any{
@@ -165,19 +172,9 @@ func (s *coachServer) grade(w http.ResponseWriter, r *http.Request) {
 
 	correct := req.SuspectedService == def.ExpectedService && req.SuspectedIssue == def.ExpectedIssue
 	if !correct {
-		generated, err := s.generateScenarioTraffic(r.Context(), def, defaultTraceBatchSize)
-		if err != nil {
-			app.WriteJSON(w, http.StatusOK, map[string]any{
-				"correct":  false,
-				"feedback": fmt.Sprintf("Not yet. Start with `%s` and the `%s` trace, then compare the longest child span with the noisy-but-healthy dependencies. Automatic trace generation failed, so refresh the page and try again.", def.FocusService, def.FocusOperation),
-			})
-			return
-		}
-		s.markPreparedIfCurrent(def.ID)
-
 		app.WriteJSON(w, http.StatusOK, map[string]any{
 			"correct":  false,
-			"feedback": fmt.Sprintf("Not yet. Start with `%s` and the `%s` trace, then compare the longest child span with the noisy-but-healthy dependencies. Prepared %d fresh traces for %s in Jaeger.", def.FocusService, def.FocusOperation, generated, def.Route),
+			"feedback": fmt.Sprintf("Not yet. Start with `%s` and the `%s` trace, then compare the longest child span with the noisy-but-healthy dependencies. The current scenario stays in place, so keep inspecting the latest trace or click New Scenario for a fresh one.", def.FocusService, def.FocusOperation),
 		})
 		return
 	}
@@ -193,7 +190,7 @@ func (s *coachServer) grade(w http.ResponseWriter, r *http.Request) {
 
 	app.WriteJSON(w, http.StatusOK, map[string]any{
 		"correct":       true,
-		"feedback":      fmt.Sprintf("Correct. The culprit was %s. Loaded the next scenario and prepared %d fresh traces for %s.", def.Answer, generated, next.Route),
+		"feedback":      fmt.Sprintf("Correct. The culprit was %s. Loaded the next scenario and prepared %s for %s.", def.Answer, freshTraceText(generated), next.Route),
 		"next_scenario": s.toPublic(next),
 	})
 }
@@ -319,6 +316,18 @@ func defaultEnv(key, fallback string) string {
 	return fallback
 }
 
+func freshTraceText(count int) string {
+	if count == 1 {
+		return "1 fresh trace"
+	}
+	return fmt.Sprintf("%d fresh traces", count)
+}
+
+func serveFavicon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/vnd.microsoft.icon")
+	http.ServeContent(w, r, "favicon.ico", time.Time{}, bytes.NewReader(coachFavicon))
+}
+
 const pageTemplate = `
 <!doctype html>
 <html lang="en">
@@ -326,6 +335,8 @@ const pageTemplate = `
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Trace Coach</title>
+    <meta name="description" content="Fresh traces are generated automatically for every scenario, so the learner can go straight into Jaeger, diagnose the real culprit, and keep looping with immediate feedback.">
+    <link rel="icon" href="/favicon.ico">
     <style>
       :root {
         --bg: #efe7d4;
@@ -337,12 +348,20 @@ const pageTemplate = `
         --success: #215f3c;
         --border: #d3c2ae;
       }
+      html {
+        min-height: 100%;
+        background: #e8dcc6;
+      }
       body {
         margin: 0;
+        min-height: 100vh;
         font-family: "Iowan Old Style", Georgia, serif;
-        background:
+        background-color: var(--bg);
+        background-image:
           radial-gradient(circle at top left, rgba(165, 61, 36, 0.12), transparent 28%),
           linear-gradient(180deg, #f5ecdd 0%, #e8dcc6 100%);
+        background-repeat: no-repeat;
+        background-size: 100% 100%;
         color: var(--ink);
       }
       main {
@@ -414,30 +433,80 @@ const pageTemplate = `
         background: #dceedd;
         color: var(--success);
       }
+      .hint-shell {
+        display: grid;
+        grid-template-rows: 0fr;
+        opacity: 0;
+        overflow: hidden;
+        transform: translateY(-8px);
+        transition:
+          grid-template-rows 280ms cubic-bezier(0.2, 0.8, 0.2, 1),
+          opacity 220ms ease,
+          transform 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+      .hint-shell.open {
+        grid-template-rows: 1fr;
+        opacity: 1;
+        transform: translateY(0);
+        transition-delay: 90ms;
+      }
+      .hint-shell > * {
+        min-height: 0;
+      }
       #hint-box {
         min-height: 72px;
         padding: 12px 14px;
         border-radius: 14px;
         background: #f3ede3;
+        white-space: pre-line;
       }
       .actions {
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
       }
+      .hint-actions {
+        margin-top: 10px;
+      }
       code {
         background: #f3ead8;
         padding: 2px 6px;
         border-radius: 8px;
       }
+      #busy-overlay {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(31, 33, 32, 0.34);
+        backdrop-filter: blur(3px);
+        z-index: 1000;
+      }
+      #busy-overlay.hidden {
+        display: none;
+      }
+      .modal {
+        min-width: min(320px, calc(100vw - 40px));
+        max-width: 420px;
+        text-align: center;
+      }
+      .spinner {
+        width: 34px;
+        height: 34px;
+        margin: 0 auto 14px;
+        border-radius: 50%;
+        border: 3px solid rgba(165, 61, 36, 0.18);
+        border-top-color: var(--accent);
+        animation: spin 0.85s linear infinite;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
     </style>
   </head>
   <body>
     <main class="stack">
-      <section class="panel">
-        <h1>Trace Coach</h1>
-        <p class="muted">Fresh traces are generated automatically for every scenario, so the learner can go straight into Jaeger, diagnose the real culprit, and keep looping with immediate feedback.</p>
-      </section>
       <section class="grid">
         <article class="panel stack">
           <div>
@@ -450,29 +519,23 @@ const pageTemplate = `
             <h2 id="title"></h2>
             <p id="objective"></p>
             <p id="prompt" class="muted"></p>
-            <p class="muted">The coach automatically seeds a fresh batch of traces when the scenario starts, when you retry after a miss, and when the next scenario loads.</p>
+            <p class="muted">The coach automatically seeds a fresh trace when the scenario starts, when you randomize, and when the next scenario loads after a correct answer.</p>
           </div>
           <div class="actions">
             {{if .JaegerURL}}<a class="button" target="_blank" rel="noreferrer" href="{{.JaegerURL}}">Open Jaeger</a>{{end}}
-            <button id="skip">Randomize Scenario</button>
+            <button id="skip">New Scenario</button>
           </div>
           <div>
             <strong>Trace entry point</strong>
             <p class="muted">Start with service <code id="focus-service"></code> and operation <code id="focus-operation"></code>.</p>
           </div>
           <div>
-            <strong>Suggested learner loop</strong>
-            {{if .JaegerURL}}
-            <p class="muted">1. Read the scenario. 2. Open Jaeger. 3. Inspect the newest trace for the focus operation. 4. Identify the true culprit service and issue type. 5. Submit. 6. Repeat.</p>
-            {{else}}
-            <p class="muted">1. Read the scenario. 2. Open the separately exposed Jaeger UI. 3. Inspect the newest trace for the focus operation. 4. Identify the true culprit service and issue type. 5. Submit. 6. Repeat.</p>
-            {{end}}
-          </div>
-          <div>
             <strong>Need a hint?</strong>
             <p class="muted">Use hints only if you are stuck moving from the entry span to the next service layer.</p>
-            <div id="hint-box" class="muted">No hint revealed yet.</div>
-            <div class="actions">
+            <div id="hint-shell" class="hint-shell" aria-hidden="true">
+              <div id="hint-box" class="muted"></div>
+            </div>
+            <div class="actions hint-actions">
               <button id="hint" type="button">Show Hint</button>
             </div>
           </div>
@@ -500,8 +563,15 @@ const pageTemplate = `
         </aside>
       </section>
     </main>
+    <div id="busy-overlay" class="hidden" aria-live="polite" aria-busy="true">
+      <div class="panel modal">
+        <div class="spinner" aria-hidden="true"></div>
+        <strong id="busy-title">Loading...</strong>
+      </div>
+    </div>
     <script>
       const initialScenario = {{.InitialScenario}};
+      const learnerLoopHint = "1. Read the scenario.\n2. Open Jaeger.\n3. Inspect the newest trace for the focus operation.";
       let current = initialScenario;
       let hintLevel = 0;
 
@@ -512,30 +582,35 @@ const pageTemplate = `
       }
 
       function hintsForCurrent() {
-        return [current.hint_1, current.hint_2].filter(Boolean);
+        return [learnerLoopHint, current.hint_1, current.hint_2].filter(Boolean);
       }
 
       function renderHints() {
         const hints = hintsForCurrent();
+        const shell = document.getElementById("hint-shell");
         const box = document.getElementById("hint-box");
         const button = document.getElementById("hint");
+        const isOpen = hints.length > 0 && hintLevel > 0;
+
+        shell.classList.toggle("open", isOpen);
+        shell.setAttribute("aria-hidden", String(!isOpen));
 
         if (hints.length === 0) {
-          box.textContent = "No hints are configured for this scenario.";
+          box.textContent = "";
           button.disabled = true;
           button.textContent = "Hints Unavailable";
           return;
         }
 
         if (hintLevel === 0) {
-          box.textContent = "No hint revealed yet.";
+          box.textContent = "";
           button.disabled = false;
           button.textContent = "Show Hint";
           return;
         }
 
         const level = Math.min(hintLevel, hints.length);
-        box.textContent = "Hint " + level + ": " + hints[level-1];
+        box.textContent = hints[level-1];
         button.disabled = level >= hints.length;
         button.textContent = level >= hints.length ? "No More Hints" : "Show Another Hint";
       }
@@ -546,6 +621,25 @@ const pageTemplate = `
           hintLevel++;
           renderHints();
         }
+      }
+
+      function setBusy(message) {
+        document.getElementById("busy-title").textContent = message;
+        document.getElementById("busy-overlay").classList.remove("hidden");
+        document.getElementById("submit").disabled = true;
+        document.getElementById("skip").disabled = true;
+        document.getElementById("hint").disabled = true;
+        document.getElementById("service").disabled = true;
+        document.getElementById("issue").disabled = true;
+      }
+
+      function clearBusy() {
+        document.getElementById("busy-overlay").classList.add("hidden");
+        document.getElementById("submit").disabled = false;
+        document.getElementById("skip").disabled = false;
+        document.getElementById("service").disabled = false;
+        document.getElementById("issue").disabled = false;
+        renderHints();
       }
 
       function render() {
@@ -559,7 +653,7 @@ const pageTemplate = `
       }
 
       async function randomize(exclude = "") {
-        setFeedback("Preparing a new activity...");
+        setBusy("Loading a new scenario...");
         try {
           const response = await fetch("/api/scenarios/random?exclude=" + encodeURIComponent(exclude));
           if (!response.ok) {
@@ -568,14 +662,16 @@ const pageTemplate = `
 
           current = await response.json();
           render();
-          setFeedback("New scenario loaded. Fresh traces are ready in Jaeger for " + current.route + ".");
+          setFeedback("New scenario loaded. A fresh trace is ready in Jaeger for " + current.route + ".");
         } catch (error) {
           setFeedback("Loading a new scenario failed. Refresh the page and try again.");
+        } finally {
+          clearBusy();
         }
       }
 
       async function submit() {
-        setFeedback("Checking the diagnosis...");
+        setBusy("Checking your answer...");
         try {
           const response = await fetch("/api/grade", {
             method: "POST",
@@ -599,6 +695,8 @@ const pageTemplate = `
           setFeedback(payload.feedback, payload.correct);
         } catch (error) {
           setFeedback("Submitting the diagnosis failed. Refresh the page and try again.");
+        } finally {
+          clearBusy();
         }
       }
 

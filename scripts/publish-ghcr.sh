@@ -165,7 +165,7 @@ echo "Using GHCR tag ${image_tag}."
 
 if [[ "${build_images}" != "0" ]]; then
   echo "Building application images as ${source_image_tag}..."
-  IMAGE_TAG="${source_image_tag}" bash "${repo_root}/scripts/build-images.sh"
+  APPS= IMAGE_TAG="${source_image_tag}" bash "${repo_root}/scripts/build-images.sh"
 fi
 
 for image_name in "${app_images[@]}"; do
@@ -179,7 +179,6 @@ if [[ "${mirror_upstream}" != "0" ]]; then
   mirror_upstream_image "redis:8.4.0-alpine" "${ghcr_namespace}/cloudtracing-third-party/redis:8.4.0-alpine"
   mirror_upstream_image "getmeili/meilisearch:v1.15" "${ghcr_namespace}/cloudtracing-third-party/meilisearch:v1.15"
   mirror_upstream_image "jaegertracing/all-in-one:1.75.0" "${ghcr_namespace}/cloudtracing-third-party/jaeger-all-in-one:1.75.0"
-  mirror_upstream_image "otel/opentelemetry-collector-contrib:0.143.0" "${ghcr_namespace}/cloudtracing-third-party/opentelemetry-collector-contrib:0.143.0"
 fi
 
 echo

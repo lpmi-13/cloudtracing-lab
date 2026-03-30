@@ -5,14 +5,17 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
 cd "${repo_root}"
 
+echo "Tearing down the existing local trace-lab namespace..."
+bash "${script_dir}/down.sh"
+
 echo "Building local images..."
-bash "${script_dir}/build-images.sh"
+APPS= bash "${script_dir}/build-images.sh"
 
 echo "Pushing images to the local registry..."
-bash "${script_dir}/load-images.sh"
+APPS= bash "${script_dir}/load-images.sh"
 
 echo "Deploying the local k3s overlay..."
-bash "${script_dir}/deploy.sh"
+APPS= bash "${script_dir}/deploy.sh"
 
 echo
 echo "Cluster is ready:"
