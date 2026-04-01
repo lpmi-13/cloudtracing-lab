@@ -16,6 +16,8 @@ spec:
         - name: jaeger
           image: jaegertracing/all-in-one:1.75.0
           imagePullPolicy: IfNotPresent
+          args:
+            - --memory.max-traces=15
           env:
             - name: COLLECTOR_OTLP_ENABLED
               value: "true"

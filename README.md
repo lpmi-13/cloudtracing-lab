@@ -55,11 +55,11 @@ Initial faults:
 
 ## Learner Loop
 
-1. The coach UI picks a scenario at random and automatically seeds fresh traffic into the web tier.
-2. The learner opens Jaeger and inspects the newest trace for the target route.
+1. The coach UI picks a scenario at random and automatically seeds five fresh traces into every learner-facing endpoint.
+2. The learner opens Jaeger, filters to the focus service and operation from the coach, and inspects the newest matching trace.
 3. The learner submits the suspected culprit service and issue type in the coach UI.
 4. If the diagnosis is wrong, the current scenario stays in place so the learner can keep inspecting the latest trace or start a new scenario manually.
-5. If the diagnosis is correct, the coach UI immediately advances to a new random scenario and seeds the next trace automatically.
+5. If the diagnosis is correct, the coach UI immediately advances to a new random scenario and seeds the next batch automatically.
 6. The loop continues until the learner decides to stop.
 
 ## Repo Layout
@@ -153,13 +153,15 @@ The local overlay also binds the internal HTTP services to fixed loopback ports 
 
 ## Start The Investigation
 
-1. Open `http://localhost:9000` first and read the active scenario title, objective, and route. The coach automatically seeds a fresh trace as soon as the scenario loads.
-2. Open `http://localhost:9002` and look for the newest trace for the route the coach asked you to investigate.
+1. Open `http://localhost:9000` first and read the active scenario title, objective, and route. The coach seeds five fresh traces across all learner-facing endpoints as soon as the scenario loads.
+2. Open `http://localhost:9002`, set Jaeger to the focus service and operation shown in the coach, and inspect the newest matching trace.
 3. Start at the web tier span, then follow the request downstream through `edge-api` into the backing service spans.
 4. Identify the component creating the real slowdown or failure, not just the first upstream service that noticed it. Pay close attention to long database, Redis, or Meilisearch spans.
 5. If you get stuck moving from the entry span into the real suspect branch, use the `Need a hint?` panel in the coach UI for a minimal nudge.
-6. Go back to the coach UI and submit the culprit service plus issue type. If you are wrong, the current scenario stays in place; if you want a fresh trace, click `New Scenario`.
+6. Go back to the coach UI and submit the culprit service plus issue type. If you are wrong, the current scenario stays in place; if you want a fresh batch, click `New Scenario`.
 7. Repeat until you solve it or move to a new scenario.
+
+Jaeger now keeps only the most recent activity-sized batch in memory. The local deployment caps in-memory storage at 15 traces, so each 5-per-endpoint batch replaces the previous one without waiting for Jaeger to restart.
 
 If you want to explore the storefront manually alongside the guided activity, `http://localhost:9001` still exposes search, checkout, and account-history flows, but the coach no longer depends on manual trace generation.
 

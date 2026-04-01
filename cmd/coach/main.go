@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -55,8 +56,9 @@ type gradeRequest struct {
 	SuspectedIssue   string `json:"suspected_issue"`
 }
 
-// One fresh trace is enough because the learner always inspects the newest trace.
-const defaultTraceBatchSize = 1
+// Seed every distinct learner-facing route on each iteration so the active scenario
+// is not obvious from a single operation appearing in Jaeger.
+const defaultTraceBatchSize = 5
 
 //go:embed favicon.ico
 var coachFavicon []byte
@@ -104,11 +106,11 @@ func main() {
 func (s *coachServer) index(w http.ResponseWriter, r *http.Request) {
 	selected, generated, err := s.prepareCurrentScenario(r.Context(), defaultTraceBatchSize)
 	payload, _ := json.Marshal(s.toPublic(selected))
-	feedback := fmt.Sprintf("The current scenario is ready. Open Jaeger and inspect the newest trace for %s.", selected.Route)
+	feedback := focusTraceFeedback(selected)
 	if err != nil {
 		feedback = "The current scenario is loaded, but automatic trace generation failed. Refresh the page and try again."
 	} else if generated > 0 {
-		feedback = fmt.Sprintf("Generated %s for %s. Open Jaeger and inspect the newest trace.", freshTraceText(generated), selected.Route)
+		feedback = fmt.Sprintf("Generated %s across the shop endpoints. %s", freshTraceText(generated), focusTraceFeedback(selected))
 	}
 
 	data := map[string]any{
@@ -174,7 +176,7 @@ func (s *coachServer) grade(w http.ResponseWriter, r *http.Request) {
 	if !correct {
 		app.WriteJSON(w, http.StatusOK, map[string]any{
 			"correct":  false,
-			"feedback": fmt.Sprintf("Not yet. Start with `%s` and the `%s` trace, then compare the longest child span with the noisy-but-healthy dependencies. The current scenario stays in place, so keep inspecting the latest trace or click New Scenario for a fresh one.", def.FocusService, def.FocusOperation),
+			"feedback": fmt.Sprintf("Not yet. Start with `%s` and the `%s` trace, then compare the longest child span with the noisy-but-healthy dependencies. The current scenario stays in place, so keep inspecting the latest trace or click New Scenario for a fresh batch.", def.FocusService, def.FocusOperation),
 		})
 		return
 	}
@@ -190,7 +192,7 @@ func (s *coachServer) grade(w http.ResponseWriter, r *http.Request) {
 
 	app.WriteJSON(w, http.StatusOK, map[string]any{
 		"correct":       true,
-		"feedback":      fmt.Sprintf("Correct. The culprit was %s. Loaded the next scenario and prepared %s for %s.", def.Answer, freshTraceText(generated), next.Route),
+		"feedback":      fmt.Sprintf("Correct.\n\nThe culprit was %s.\n\nLoaded the next scenario and prepared %s across the shop endpoints.", def.Answer, freshTraceText(generated)),
 		"next_scenario": s.toPublic(next),
 	})
 }
@@ -243,32 +245,34 @@ func (s *coachServer) advanceScenario(ctx context.Context, exclude string, count
 
 func (s *coachServer) generateScenarioTraffic(ctx context.Context, def scenario.Definition, count int) (int, error) {
 	if count <= 0 {
-		count = 4
-	}
-
-	target := s.webURL + def.TrafficPath
-	separator := "&"
-	if !strings.Contains(def.TrafficPath, "?") {
-		separator = "?"
+		count = defaultTraceBatchSize
 	}
 
 	var firstErr error
 	var successes int
-	for i := 0; i < count; i++ {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, target+separator+"scenario="+def.ID, nil)
-		if err != nil {
-			return successes, err
+	for _, trafficPath := range s.trafficPathsForScenario(def) {
+		target := s.webURL + trafficPath
+		separator := "&"
+		if !strings.Contains(trafficPath, "?") {
+			separator = "?"
 		}
-		httpReq.Header.Set(app.ScenarioHeader, def.ID)
-		resp, err := s.client.Do(httpReq)
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
+
+		for i := 0; i < count; i++ {
+			httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, target+separator+"scenario="+def.ID, nil)
+			if err != nil {
+				return successes, err
 			}
-			continue
+			httpReq.Header.Set(app.ScenarioHeader, def.ID)
+			resp, err := s.client.Do(httpReq)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			resp.Body.Close()
+			successes++
 		}
-		resp.Body.Close()
-		successes++
 	}
 
 	if successes == 0 && firstErr != nil {
@@ -276,6 +280,40 @@ func (s *coachServer) generateScenarioTraffic(ctx context.Context, def scenario.
 	}
 
 	return successes, nil
+}
+
+func (s *coachServer) trafficPathsForScenario(def scenario.Definition) []string {
+	pathsByRoute := map[string]string{}
+	otherRoutes := make([]string, 0, len(s.scenarioSet))
+
+	for _, candidate := range s.scenarioSet {
+		if candidate.Route == "" || candidate.TrafficPath == "" {
+			continue
+		}
+		if candidate.Route == def.Route {
+			pathsByRoute[candidate.Route] = def.TrafficPath
+			continue
+		}
+
+		existing, ok := pathsByRoute[candidate.Route]
+		if !ok {
+			otherRoutes = append(otherRoutes, candidate.Route)
+			pathsByRoute[candidate.Route] = candidate.TrafficPath
+			continue
+		}
+		if candidate.TrafficPath < existing {
+			pathsByRoute[candidate.Route] = candidate.TrafficPath
+		}
+	}
+
+	sort.Strings(otherRoutes)
+
+	paths := make([]string, 0, len(otherRoutes)+1)
+	for _, route := range otherRoutes {
+		paths = append(paths, pathsByRoute[route])
+	}
+	paths = append(paths, def.TrafficPath)
+	return paths
 }
 
 func (s *coachServer) pickRandom(exclude string) scenario.Definition {
@@ -321,6 +359,10 @@ func freshTraceText(count int) string {
 		return "1 fresh trace"
 	}
 	return fmt.Sprintf("%d fresh traces", count)
+}
+
+func focusTraceFeedback(def scenario.Definition) string {
+	return fmt.Sprintf("In Jaeger, filter to service %s and operation %s, then open the newest trace.", def.FocusService, def.FocusOperation)
 }
 
 func serveFavicon(w http.ResponseWriter, r *http.Request) {
@@ -428,6 +470,7 @@ const pageTemplate = `
         padding: 12px 14px;
         border-radius: 14px;
         background: #f3ede3;
+        white-space: pre-line;
       }
       #feedback.ok {
         background: #dceedd;
@@ -519,7 +562,7 @@ const pageTemplate = `
             <h2 id="title"></h2>
             <p id="objective"></p>
             <p id="prompt" class="muted"></p>
-            <p class="muted">The coach automatically seeds a fresh trace when the scenario starts, when you randomize, and when the next scenario loads after a correct answer.</p>
+            <p class="muted">The coach seeds fresh traces across all shop endpoints when the scenario starts, when you randomize, and when the next scenario loads after a correct answer.</p>
           </div>
           <div class="actions">
             {{if .JaegerURL}}<a class="button" target="_blank" rel="noreferrer" href="{{.JaegerURL}}">Open Jaeger</a>{{end}}
@@ -544,16 +587,18 @@ const pageTemplate = `
           <div>
             <h3>Submit Diagnosis</h3>
             <select id="service">
+              <option value="">Select service</option>
               <option value="catalog-api">catalog-api</option>
               <option value="inventory-api">inventory-api</option>
               <option value="orders-api">orders-api</option>
               <option value="payments-api">payments-api</option>
             </select>
             <select id="issue">
-              <option value="expensive_search_query">expensive_search_query</option>
-              <option value="n_plus_one_queries">n_plus_one_queries</option>
-              <option value="lock_wait_timeout">lock_wait_timeout</option>
-              <option value="expensive_sort">expensive_sort</option>
+              <option value="">Select issue type</option>
+              <option value="expensive_search_query">expensive search query</option>
+              <option value="n_plus_one_queries">n plus one queries</option>
+              <option value="lock_wait_timeout">lock wait timeout</option>
+              <option value="expensive_sort">expensive sort</option>
             </select>
             <div class="actions">
               <button id="submit">Check Answer</button>
@@ -648,6 +693,8 @@ const pageTemplate = `
         document.getElementById("prompt").textContent = current.prompt;
         document.getElementById("focus-service").textContent = current.focus_service;
         document.getElementById("focus-operation").textContent = current.focus_operation;
+        document.getElementById("service").value = "";
+        document.getElementById("issue").value = "";
         hintLevel = 0;
         renderHints();
       }
@@ -662,7 +709,7 @@ const pageTemplate = `
 
           current = await response.json();
           render();
-          setFeedback("New scenario loaded. A fresh trace is ready in Jaeger for " + current.route + ".");
+          setFeedback("New scenario loaded. In Jaeger, filter to service " + current.focus_service + " and operation " + current.focus_operation + ", then open the newest trace.");
         } catch (error) {
           setFeedback("Loading a new scenario failed. Refresh the page and try again.");
         } finally {
@@ -673,13 +720,19 @@ const pageTemplate = `
       async function submit() {
         setBusy("Checking your answer...");
         try {
+          const suspectedService = document.getElementById("service").value;
+          const suspectedIssue = document.getElementById("issue").value;
+          if (!suspectedService || !suspectedIssue) {
+            throw new Error("select both diagnosis fields");
+          }
+
           const response = await fetch("/api/grade", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({
               scenario_id: current.id,
-              suspected_service: document.getElementById("service").value,
-              suspected_issue: document.getElementById("issue").value
+              suspected_service: suspectedService,
+              suspected_issue: suspectedIssue
             })
           });
 
@@ -694,7 +747,11 @@ const pageTemplate = `
           }
           setFeedback(payload.feedback, payload.correct);
         } catch (error) {
-          setFeedback("Submitting the diagnosis failed. Refresh the page and try again.");
+          if (error.message === "select both diagnosis fields") {
+            setFeedback("Select both a suspected service and an issue type before submitting.");
+          } else {
+            setFeedback("Submitting the diagnosis failed. Refresh the page and try again.");
+          }
         } finally {
           clearBusy();
         }

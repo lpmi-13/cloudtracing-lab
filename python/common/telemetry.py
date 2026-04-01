@@ -5,7 +5,7 @@ from opentelemetry import propagate, trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.trace import SpanKind
 
 
@@ -20,7 +20,7 @@ def init_telemetry(service_name: str):
             }
         )
     )
-    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
+    provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
     trace.set_tracer_provider(provider)
     return trace.get_tracer(service_name)
 
@@ -43,4 +43,3 @@ def client_span(tracer, name: str, attrs: dict | None = None):
         for key, value in (attrs or {}).items():
             span.set_attribute(key, value)
         yield span
-

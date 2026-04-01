@@ -23,8 +23,8 @@ spec:
               value: $(REDIS_SERVICE_HOST):$(REDIS_SERVICE_PORT)
             - name: MEILISEARCH_URL
               value: http://$(MEILISEARCH_SERVICE_HOST):$(MEILISEARCH_SERVICE_PORT)
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: $(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_OTLP_HTTP)
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://$(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_OTLP_HTTP)/v1/traces
             - name: SCENARIO_FILE
               value: /config/scenarios.json
           ports:
@@ -76,8 +76,8 @@ spec:
           env:
             - name: POSTGRES_DSN
               value: postgres://lab:lab@$(POSTGRES_SERVICE_HOST):$(POSTGRES_SERVICE_PORT)/lab?sslmode=disable
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: $(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_OTLP_HTTP)
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://$(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_OTLP_HTTP)/v1/traces
             - name: SCENARIO_FILE
               value: /config/scenarios.json
           ports:
@@ -129,8 +129,8 @@ spec:
           env:
             - name: POSTGRES_DSN
               value: postgres://lab:lab@$(POSTGRES_SERVICE_HOST):$(POSTGRES_SERVICE_PORT)/lab?sslmode=disable
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: $(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_OTLP_HTTP)
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://$(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_OTLP_HTTP)/v1/traces
             - name: SCENARIO_FILE
               value: /config/scenarios.json
           ports:
@@ -241,8 +241,8 @@ spec:
               value: http://$(ORDERS_API_SERVICE_HOST):$(ORDERS_API_SERVICE_PORT)
             - name: PAYMENTS_URL
               value: http://$(PAYMENTS_API_SERVICE_HOST):$(PAYMENTS_API_SERVICE_PORT)
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: $(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_OTLP_HTTP)
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://$(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_OTLP_HTTP)/v1/traces
           ports:
             - containerPort: 8080
           readinessProbe:
