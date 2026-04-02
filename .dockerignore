@@ -1,0 +1,20 @@
+# Keep app-image build contexts limited to the source trees the Dockerfiles
+# actually copy. The preloaded rootfs flow assembles its own temporary context,
+# so it is unaffected by this file.
+*
+!go.mod
+!go.sum
+!cmd/
+!cmd/**
+!internal/
+!internal/**
+!pkg/
+!pkg/**
+!services/
+!services/**
+!python/
+!python/**
+!scenarios/
+!scenarios/**
+!docker/
+!docker/**
