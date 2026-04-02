@@ -176,7 +176,7 @@ func (s *coachServer) grade(w http.ResponseWriter, r *http.Request) {
 	if !correct {
 		app.WriteJSON(w, http.StatusOK, map[string]any{
 			"correct":  false,
-			"feedback": fmt.Sprintf("Not yet. Start with `%s` and the `%s` trace, then compare the longest child span with the noisy-but-healthy dependencies. The current scenario stays in place, so keep inspecting the latest trace or click New Scenario for a fresh batch.", def.FocusService, def.FocusOperation),
+			"feedback": "Incorrect answer, please try again",
 		})
 		return
 	}
@@ -251,34 +251,71 @@ func (s *coachServer) generateScenarioTraffic(ctx context.Context, def scenario.
 	var firstErr error
 	var successes int
 	for _, trafficPath := range s.trafficPathsForScenario(def) {
-		target := s.webURL + trafficPath
-		separator := "&"
-		if !strings.Contains(trafficPath, "?") {
-			separator = "?"
+		pathSuccesses, err := s.generateTrafficBatch(ctx, def, trafficPath, count)
+		if err != nil && firstErr == nil {
+			firstErr = err
 		}
-
-		for i := 0; i < count; i++ {
-			httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, target+separator+"scenario="+def.ID, nil)
-			if err != nil {
-				return successes, err
-			}
-			httpReq.Header.Set(app.ScenarioHeader, def.ID)
-			resp, err := s.client.Do(httpReq)
-			if err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
-			}
-			resp.Body.Close()
-			successes++
-		}
+		successes += pathSuccesses
 	}
 
 	if successes == 0 && firstErr != nil {
 		return 0, firstErr
 	}
 
+	return successes, nil
+}
+
+func (s *coachServer) generateTrafficBatch(ctx context.Context, def scenario.Definition, trafficPath string, count int) (int, error) {
+	target := s.webURL + trafficPath
+	separator := "&"
+	if !strings.Contains(trafficPath, "?") {
+		separator = "?"
+	}
+
+	var (
+		wg        sync.WaitGroup
+		mu        sync.Mutex
+		firstErr  error
+		successes int
+	)
+
+	wg.Add(count)
+	for i := 0; i < count; i++ {
+		go func() {
+			defer wg.Done()
+
+			httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, target+separator+"scenario="+def.ID, nil)
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				mu.Unlock()
+				return
+			}
+			httpReq.Header.Set(app.ScenarioHeader, def.ID)
+
+			resp, err := s.client.Do(httpReq)
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				mu.Unlock()
+				return
+			}
+			resp.Body.Close()
+
+			mu.Lock()
+			successes++
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	if successes == 0 && firstErr != nil {
+		return 0, firstErr
+	}
 	return successes, nil
 }
 
@@ -617,6 +654,9 @@ const pageTemplate = `
     <script>
       const initialScenario = {{.InitialScenario}};
       const learnerLoopHint = "1. Read the scenario.\n2. Open Jaeger.\n3. Inspect the newest trace for the focus operation.";
+      // Keep submit loading feedback visible briefly so instant wrong answers do
+      // not cause a distracting busy-overlay flash.
+      const minimumSubmitBusyMs = 700;
       let current = initialScenario;
       let hintLevel = 0;
 
@@ -624,6 +664,10 @@ const pageTemplate = `
         const box = document.getElementById("feedback");
         box.textContent = message;
         box.className = ok ? "ok" : "";
+      }
+
+      function delay(ms) {
+        return new Promise((resolve) => window.setTimeout(resolve, ms));
       }
 
       function hintsForCurrent() {
@@ -718,14 +762,16 @@ const pageTemplate = `
       }
 
       async function submit() {
+        const suspectedService = document.getElementById("service").value;
+        const suspectedIssue = document.getElementById("issue").value;
+        if (!suspectedService || !suspectedIssue) {
+          setFeedback("Select both a suspected service and an issue type before submitting.");
+          return;
+        }
+
+        const minimumBusy = delay(minimumSubmitBusyMs);
         setBusy("Checking your answer...");
         try {
-          const suspectedService = document.getElementById("service").value;
-          const suspectedIssue = document.getElementById("issue").value;
-          if (!suspectedService || !suspectedIssue) {
-            throw new Error("select both diagnosis fields");
-          }
-
           const response = await fetch("/api/grade", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
@@ -747,12 +793,9 @@ const pageTemplate = `
           }
           setFeedback(payload.feedback, payload.correct);
         } catch (error) {
-          if (error.message === "select both diagnosis fields") {
-            setFeedback("Select both a suspected service and an issue type before submitting.");
-          } else {
-            setFeedback("Submitting the diagnosis failed. Refresh the page and try again.");
-          }
+          setFeedback("Submitting the diagnosis failed. Refresh the page and try again.");
         } finally {
+          await minimumBusy;
           clearBusy();
         }
       }

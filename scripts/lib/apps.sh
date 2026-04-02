@@ -8,6 +8,7 @@ cloudtracing_all_apps=(
   orders
   shop-web
   payments
+  jaeger-ui
 )
 
 trim_whitespace() {
@@ -43,6 +44,9 @@ canonical_app_name() {
     shop|shop-web|web)
       echo "shop-web"
       ;;
+    jaeger|jaeger-ui|trace-ui)
+      echo "jaeger-ui"
+      ;;
     *)
       return 1
       ;;
@@ -71,6 +75,9 @@ deployment_name_for_app() {
       ;;
     shop-web)
       echo "shop-web"
+      ;;
+    jaeger-ui)
+      echo "jaeger"
       ;;
     *)
       return 1

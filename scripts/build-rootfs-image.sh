@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
+source "${repo_root}/scripts/lib/versions.sh"
 
 app_image_tag="${IMAGE_TAG:-v1}"
 rootfs_image="${ROOTFS_IMAGE:-cloudtracing-k3s-rootfs:v1}"
@@ -19,13 +20,14 @@ app_images=(
   "cloudtracing/orders:${app_image_tag}"
   "cloudtracing/shop-web:${app_image_tag}"
   "cloudtracing/payments:${app_image_tag}"
+  "${JAEGER_UI_IMAGE_REPO}:${app_image_tag}"
 )
 
 runtime_images=(
-  postgres:17.4-alpine
-  redis:8.4.0-alpine
-  getmeili/meilisearch:v1.15
-  jaegertracing/all-in-one:1.75.0
+  "${POSTGRES_IMAGE}"
+  "${REDIS_IMAGE}"
+  "${MEILISEARCH_IMAGE}"
+  "${JAEGER_IMAGE}"
 )
 
 ensure_image() {

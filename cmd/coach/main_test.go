@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"cloudtracing/internal/scenario"
 )
@@ -108,5 +109,82 @@ func TestPrepareCurrentScenarioSeedsFiveTracesPerEndpoint(t *testing.T) {
 		if got := counts[path]; got != want {
 			t.Fatalf("path %s: expected %d requests, got %d", path, want, got)
 		}
+	}
+}
+
+func TestGenerateScenarioTrafficRunsEachRouteBatchConcurrently(t *testing.T) {
+	const batchSize = 3
+
+	release := make(chan struct{})
+	reachedBatch := make(chan struct{}, 1)
+
+	var (
+		mu        sync.Mutex
+		active    int
+		maxActive int
+	)
+
+	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		active++
+		if active > maxActive {
+			maxActive = active
+		}
+		if active == batchSize {
+			select {
+			case reachedBatch <- struct{}{}:
+			default:
+			}
+		}
+		mu.Unlock()
+
+		<-release
+
+		mu.Lock()
+		active--
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer web.Close()
+
+	def := scenario.Definition{
+		ID:          "checkout-lock",
+		Route:       "/checkout",
+		TrafficPath: "/checkout?sku=sku-28",
+	}
+
+	s := &coachServer{
+		client:      web.Client(),
+		webURL:      web.URL,
+		scenarioSet: []scenario.Definition{def},
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := s.generateScenarioTraffic(context.Background(), def, batchSize)
+		errCh <- err
+	}()
+
+	select {
+	case <-reachedBatch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for a full concurrent traffic batch")
+	}
+
+	close(release)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("generateScenarioTraffic returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for generateScenarioTraffic to finish")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if maxActive != batchSize {
+		t.Fatalf("expected %d concurrent requests, got %d", batchSize, maxActive)
 	}
 }

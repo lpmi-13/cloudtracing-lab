@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
+source "${repo_root}/scripts/lib/versions.sh"
 
 ghcr_namespace="${GHCR_NAMESPACE:-}"
 image_tag="${IMAGE_TAG:-}"
@@ -161,22 +162,25 @@ images:
   - name: cloudtracing/coach
     newName: ${ghcr_namespace}/cloudtracing/coach
     newTag: "${image_tag}"
+  - name: cloudtracing/jaeger-ui
+    newName: ${ghcr_namespace}/cloudtracing/jaeger-ui
+    newTag: "${image_tag}"
 EOF
 
   if [[ "${mirror_upstream}" != "0" ]]; then
     cat <<EOF
-  - name: postgres
+  - name: ${POSTGRES_IMAGE_REPO}
     newName: ${ghcr_namespace}/cloudtracing-third-party/postgres
-    newTag: "17.4-alpine"
-  - name: redis
+    newTag: "${POSTGRES_IMAGE_TAG}"
+  - name: ${REDIS_IMAGE_REPO}
     newName: ${ghcr_namespace}/cloudtracing-third-party/redis
-    newTag: "8.4.0-alpine"
-  - name: getmeili/meilisearch
+    newTag: "${REDIS_IMAGE_TAG}"
+  - name: ${MEILISEARCH_IMAGE_REPO}
     newName: ${ghcr_namespace}/cloudtracing-third-party/meilisearch
-    newTag: "v1.15"
-  - name: jaegertracing/all-in-one
-    newName: ${ghcr_namespace}/cloudtracing-third-party/jaeger-all-in-one
-    newTag: "1.75.0"
+    newTag: "${MEILISEARCH_IMAGE_TAG}"
+  - name: ${JAEGER_IMAGE_REPO}
+    newName: ${ghcr_namespace}/cloudtracing-third-party/jaeger
+    newTag: "${JAEGER_VERSION}"
 EOF
   fi
 

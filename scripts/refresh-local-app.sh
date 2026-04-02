@@ -8,7 +8,7 @@ cd "${repo_root}"
 if (($# == 0)) && [[ -z "${APPS:-}" ]]; then
   echo "usage: bash scripts/refresh-local-app.sh <app> [<app> ...]" >&2
   echo "example: bash scripts/refresh-local-app.sh coach" >&2
-  echo "valid apps: coach edge catalog inventory orders shop-web payments" >&2
+  echo "valid apps: coach edge catalog inventory orders shop-web payments jaeger-ui" >&2
   exit 1
 fi
 

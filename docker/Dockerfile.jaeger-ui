@@ -1,0 +1,39 @@
+ARG NODE_IMAGE=node:24.11.0-alpine
+ARG CADDY_IMAGE=caddy:2.10.2-alpine
+
+FROM alpine:3.22 AS source
+ARG JAEGER_UI_GIT_TAG=main
+ARG JAEGER_UI_COMMIT_SHA=386ab954c710199930f3d6cd165833acc1b2088e
+WORKDIR /src
+RUN apk add --no-cache git
+RUN git clone --depth 1 --branch "${JAEGER_UI_GIT_TAG}" https://github.com/jaegertracing/jaeger-ui.git repo \
+    && cd repo \
+    && test "$(git rev-parse HEAD)" = "${JAEGER_UI_COMMIT_SHA}"
+
+FROM ${NODE_IMAGE} AS build
+ARG JAEGER_UI_VERSION=main-2026-04-01-386ab95
+ARG JAEGER_UI_GIT_TAG=main
+ARG JAEGER_UI_COMMIT_SHA=386ab954c710199930f3d6cd165833acc1b2088e
+ARG JAEGER_UI_SEARCH_MAX_LIMIT=14
+WORKDIR /src
+COPY --from=source /src/repo/ ./
+RUN npm ci --ignore-scripts
+RUN npm run --workspace @jaegertracing/plexus build
+# The lab stores exactly 15 traces per activity batch, and Jaeger v2 requires
+# query search depth to be strictly less than max_traces. Patch the upstream UI
+# defaults so it stops issuing invalid limit=20 searches against this backend.
+RUN sed -i "s/export const DEFAULT_LIMIT = 20;/export const DEFAULT_LIMIT = ${JAEGER_UI_SEARCH_MAX_LIMIT};/" packages/jaeger-ui/src/constants/search-form.ts \
+    && sed -i "s|const JAEGER_CONFIG = DEFAULT_CONFIG;|const JAEGER_CONFIG = {\"search\":{\"maxLimit\":${JAEGER_UI_SEARCH_MAX_LIMIT}}};|" packages/jaeger-ui/index.html
+RUN cd packages/jaeger-ui \
+    && NODE_ENV=production \
+       REACT_APP_VSN_STATE="{\"version\":\"${JAEGER_UI_VERSION}\",\"remote\":\"github.com/jaegertracing/jaeger-ui\",\"objName\":\"${JAEGER_UI_COMMIT_SHA}\",\"changed\":{\"hasChanged\":false,\"files\":0,\"insertions\":0,\"deletions\":0,\"untracked\":0,\"pretty\":\"\"},\"refName\":\"${JAEGER_UI_GIT_TAG}\",\"pretty\":\"${JAEGER_UI_VERSION} | github.com/jaegertracing/jaeger-ui | ${JAEGER_UI_COMMIT_SHA} | ${JAEGER_UI_GIT_TAG}\"}" \
+       npm exec vite build
+
+FROM ${CADDY_IMAGE}
+ARG JAEGER_UI_VERSION=main-2026-04-01-386ab95
+ARG JAEGER_UI_COMMIT_SHA=386ab954c710199930f3d6cd165833acc1b2088e
+LABEL org.opencontainers.image.source="https://github.com/jaegertracing/jaeger-ui" \
+      org.opencontainers.image.version="${JAEGER_UI_VERSION}" \
+      org.opencontainers.image.revision="${JAEGER_UI_COMMIT_SHA}"
+COPY docker/Caddyfile.jaeger-ui /etc/caddy/Caddyfile
+COPY --from=build /src/packages/jaeger-ui/build/ /srv/

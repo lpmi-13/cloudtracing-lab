@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 source "${repo_root}/scripts/lib/apps.sh"
+source "${repo_root}/scripts/lib/versions.sh"
 
 image_tag="${IMAGE_TAG:-latest}"
 resolve_requested_apps "$@"
@@ -30,6 +31,15 @@ for app in "${resolved_apps[@]}"; do
       ;;
     payments)
       docker build -f docker/Dockerfile.python --build-arg REQUIREMENTS=python/requirements-payments.txt --build-arg APP_MODULE=python.payments.app -t "cloudtracing/payments:${image_tag}" .
+      ;;
+    jaeger-ui)
+      docker build \
+        -f docker/Dockerfile.jaeger-ui \
+        --build-arg JAEGER_UI_VERSION="${JAEGER_UI_VERSION}" \
+        --build-arg JAEGER_UI_GIT_TAG="${JAEGER_UI_GIT_TAG}" \
+        --build-arg JAEGER_UI_COMMIT_SHA="${JAEGER_UI_COMMIT_SHA}" \
+        --build-arg JAEGER_UI_SEARCH_MAX_LIMIT="${JAEGER_UI_SEARCH_MAX_LIMIT}" \
+        -t "${JAEGER_UI_IMAGE_REPO}:${image_tag}" .
       ;;
   esac
 done

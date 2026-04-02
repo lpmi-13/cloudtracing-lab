@@ -26,6 +26,9 @@ images:
   - name: cloudtracing/coach
     newName: localhost:30300/cloudtracing/coach
     newTag: latest
+  - name: cloudtracing/jaeger-ui
+    newName: localhost:30300/cloudtracing/jaeger-ui
+    newTag: latest
 
 patches:
   - path: image-pull-policy.yaml

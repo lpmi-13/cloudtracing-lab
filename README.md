@@ -30,6 +30,7 @@ The MVP focuses on activity-level deliberate practice. Flame graphs are left as 
 Supporting services:
 
 - `jaeger`
+- `jaeger-ui`
 - `coach` for learner guidance, grading, and randomized scenario progression
 
 ## Current State
@@ -41,6 +42,7 @@ Supporting services:
 - the local path is `bash scripts/up.sh`, which tears the lab down, rebuilds local `:latest` images, pushes them to the trusted registry, applies the local overlay, and waits for rollout
 - the remote path is `bash scripts/publish-ghcr.sh` plus `bash scripts/deploy-remote.sh`, or simply `bash scripts/up-remote.sh`
 - the preloaded VM/rootfs path is still available for iximiuz-style playgrounds and fast-start environments
+- Jaeger now runs as a pinned v2 backend plus a separately built, pinned `jaeger-ui` sidecar served by Caddy, so UI updates can land independently of the backend image
 
 ## Scenario Types
 
@@ -83,9 +85,9 @@ Use this as the quick "which script do I run?" reference:
 | Script | Run it when | What it does and why it exists |
 | --- | --- | --- |
 | `bash scripts/up.sh` | You want the normal one-command local bring-up. | Runs the full local flow: build app images, push them to the trusted local registry, deploy the local overlay, bind the local HTTP services to `localhost`, and wait for rollout. This is the default local entry point. |
-| `bash scripts/refresh-local-app.sh coach` | You changed one or a few app images and want the fastest local refresh without tearing the namespace down. | Rebuilds only the selected app images, pushes only those tags to the local registry, and restarts only the matching deployments. This exists for quick iteration on things like the coach UI. |
+| `bash scripts/refresh-local-app.sh coach` | You changed one or a few app images and want the fastest local refresh without tearing the namespace down. | Rebuilds only the selected app images, pushes only those tags to the local registry, and restarts only the matching deployments. This exists for quick iteration on things like the coach UI or the custom Jaeger UI image. |
 | `bash scripts/down.sh` | You want to remove the local lab before a clean retry or before leaving the cluster idle. | Deletes the `trace-lab` namespace and waits for it to disappear, so the next local run starts from a clean slate. |
-| `bash scripts/build-images.sh` | You changed app code or Dockerfiles and need fresh first-party images. | Builds the Go and Python app images as `cloudtracing/*:${IMAGE_TAG:-latest}` for the normal local flow. This exists so image creation is consistent across local, remote, and rootfs flows. |
+| `bash scripts/build-images.sh` | You changed app code or Dockerfiles and need fresh first-party images. | Builds the Go, Python, and custom Jaeger UI images as `cloudtracing/*:${IMAGE_TAG:-latest}` for the normal local flow. This exists so image creation is consistent across local, remote, and rootfs flows. |
 | `bash scripts/load-images.sh` | You built local images and want `k3s` to be able to pull them. | Starts the local registry on `localhost:30300` if needed, then tags and pushes the app images there. We need it because local `k3s` does not read images directly from the host Docker daemon. |
 | `bash scripts/deploy.sh` | You changed Kubernetes manifests, changed overlays, or loaded fresh images and want them live. | Applies the selected kustomize overlay, removes legacy OpenSearch resources, restarts app deployments, and waits for rollout. We need it because a same-tag image update like `:latest` does not reliably refresh pods on `kubectl apply` alone. |
 | `bash scripts/publish-ghcr.sh` | You want to run the lab on a remote cluster that pulls from GHCR. | Publishes the first-party app images to `ghcr.io/.../cloudtracing/*:${IMAGE_TAG}` and optionally mirrors third-party runtime images too. If `IMAGE_TAG` is unset, it prompts for a tag and suggests the next `vN` based on the current GHCR app-image tags. |
@@ -129,6 +131,12 @@ You can pass more than one app name, for example:
 
 ```bash
 bash scripts/refresh-local-app.sh coach shop-web
+```
+
+To rebuild and roll out only the Caddy-served Jaeger UI image, use:
+
+```bash
+bash scripts/refresh-local-app.sh jaeger-ui
 ```
 
 After the deploy completes, open:
@@ -194,7 +202,8 @@ bash scripts/up-remote.sh
 That remote path:
 
 - publishes the application images to `ghcr.io/<your-user-or-org>/cloudtracing/*:<IMAGE_TAG>`
-- mirrors the third-party runtime images into `ghcr.io/<your-user-or-org>/cloudtracing-third-party/*` by default
+- publishes the custom Caddy-served Jaeger UI image to `ghcr.io/<your-user-or-org>/cloudtracing/jaeger-ui:<IMAGE_TAG>`
+- mirrors the third-party runtime images, including the pinned Jaeger v2 backend image, into `ghcr.io/<your-user-or-org>/cloudtracing-third-party/*` by default
 - renders a temporary remote kustomize overlay with `coach.<domain>`, `shop.<domain>`, and `jaeger.<domain>` ingress hosts
 - points the coach UI at the remote Jaeger URL
 - applies the manifests and waits for the rollouts
@@ -218,6 +227,7 @@ For VM environments where cold-start speed matters more than registry reuse, the
 That path bakes the lab into a k3s-capable filesystem image by:
 
 - building the first-party app images locally
+- building the pinned Caddy-based `jaeger-ui` image locally
 - pulling the runtime dependency images locally
 - saving all Kubernetes images into a single archive
 - copying the lab manifests into the rootfs image

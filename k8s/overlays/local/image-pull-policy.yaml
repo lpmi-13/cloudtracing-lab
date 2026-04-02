@@ -74,3 +74,14 @@ spec:
       containers:
         - name: coach
           imagePullPolicy: Always
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+spec:
+  template:
+    spec:
+      containers:
+        - name: jaeger-ui
+          imagePullPolicy: Always

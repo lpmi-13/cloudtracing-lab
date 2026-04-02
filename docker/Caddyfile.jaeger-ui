@@ -1,0 +1,19 @@
+{
+	auto_https off
+	admin off
+}
+
+:16686 {
+	encode gzip zstd
+
+	@api path /api*
+	handle @api {
+		reverse_proxy 127.0.0.1:16684
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

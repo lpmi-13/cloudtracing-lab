@@ -37,7 +37,7 @@ spec:
   template:
     spec:
       containers:
-        - name: jaeger
+        - name: jaeger-ui
           ports:
             - containerPort: 16686
               hostIP: 127.0.0.1

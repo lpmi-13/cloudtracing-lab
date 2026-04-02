@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
+source "${repo_root}/scripts/lib/versions.sh"
 
 ghcr_namespace="${GHCR_NAMESPACE:-}"
 image_tag="${IMAGE_TAG:-}"
@@ -35,6 +36,7 @@ app_images=(
   orders
   shop-web
   payments
+  jaeger-ui
 )
 
 validate_image_tag() {
@@ -175,10 +177,10 @@ for image_name in "${app_images[@]}"; do
 done
 
 if [[ "${mirror_upstream}" != "0" ]]; then
-  mirror_upstream_image "postgres:17.4-alpine" "${ghcr_namespace}/cloudtracing-third-party/postgres:17.4-alpine"
-  mirror_upstream_image "redis:8.4.0-alpine" "${ghcr_namespace}/cloudtracing-third-party/redis:8.4.0-alpine"
-  mirror_upstream_image "getmeili/meilisearch:v1.15" "${ghcr_namespace}/cloudtracing-third-party/meilisearch:v1.15"
-  mirror_upstream_image "jaegertracing/all-in-one:1.75.0" "${ghcr_namespace}/cloudtracing-third-party/jaeger-all-in-one:1.75.0"
+  mirror_upstream_image "${POSTGRES_IMAGE}" "${ghcr_namespace}/cloudtracing-third-party/postgres:${POSTGRES_IMAGE_TAG}"
+  mirror_upstream_image "${REDIS_IMAGE}" "${ghcr_namespace}/cloudtracing-third-party/redis:${REDIS_IMAGE_TAG}"
+  mirror_upstream_image "${MEILISEARCH_IMAGE}" "${ghcr_namespace}/cloudtracing-third-party/meilisearch:${MEILISEARCH_IMAGE_TAG}"
+  mirror_upstream_image "${JAEGER_IMAGE}" "${ghcr_namespace}/cloudtracing-third-party/jaeger:${JAEGER_VERSION}"
 fi
 
 echo

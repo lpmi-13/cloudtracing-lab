@@ -13,6 +13,9 @@ configMapGenerator:
   - name: postgres-init
     files:
       - 01-schema.sql=../../db/init/01-schema.sql
+  - name: jaeger-config
+    files:
+      - config.yaml=jaeger/config.yaml
 
 resources:
   - namespace.yaml
