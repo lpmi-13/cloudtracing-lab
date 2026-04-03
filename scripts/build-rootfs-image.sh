@@ -78,6 +78,7 @@ cp "${repo_root}/playground/iximiuz/image/trace-lab-bootstrap.service" \
   "${build_context}/playground/iximiuz/image/trace-lab-bootstrap.service"
 cp "${repo_root}/scripts/deploy.sh" "${build_context}/scripts/deploy.sh"
 cp "${repo_root}/scripts/deploy-preloaded-vm.sh" "${build_context}/scripts/deploy-preloaded-vm.sh"
+copy_dir "${repo_root}/scripts/lib" "${build_context}/scripts"
 
 copy_dir "${repo_root}/k8s" "${build_context}"
 copy_dir "${repo_root}/db" "${build_context}"

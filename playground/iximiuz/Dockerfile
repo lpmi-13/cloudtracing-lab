@@ -11,6 +11,7 @@ COPY db /opt/cloudtracing/db
 COPY scenarios /opt/cloudtracing/scenarios
 COPY scripts/deploy.sh /opt/cloudtracing/scripts/deploy.sh
 COPY scripts/deploy-preloaded-vm.sh /opt/cloudtracing/scripts/deploy-preloaded-vm.sh
+COPY scripts/lib /opt/cloudtracing/scripts/lib
 COPY playground/iximiuz/k3s-images.tar /opt/cloudtracing/playground/iximiuz/k3s-images.tar
 COPY playground/iximiuz/image/bootstrap-trace-lab.sh /opt/iximiuz-labs/bootstrap-trace-lab.sh
 COPY playground/iximiuz/image/trace-lab-bootstrap.service /etc/systemd/system/trace-lab-bootstrap.service
@@ -23,6 +24,7 @@ mkdir -p /opt/cloudtracing/scripts /opt/cloudtracing/playground/iximiuz /var/lib
 chmod 755 /opt/iximiuz-labs/bootstrap-trace-lab.sh
 chmod 755 /opt/cloudtracing/scripts/deploy.sh
 chmod 755 /opt/cloudtracing/scripts/deploy-preloaded-vm.sh
+test -f /opt/cloudtracing/scripts/lib/apps.sh
 
 for cmd in bash kubectl k3s jq yq rg task just websocat btop; do
   command -v "${cmd}" >/dev/null 2>&1 || {

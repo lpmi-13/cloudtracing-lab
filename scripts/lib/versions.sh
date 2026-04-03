@@ -20,11 +20,11 @@ readonly JAEGER_COMMIT_SHA="b5be18b10053a087a9bb272a1d9a0c71bcaac2c7"
 readonly JAEGER_IMAGE_REPO="cr.jaegertracing.io/jaegertracing/jaeger"
 readonly JAEGER_IMAGE="${JAEGER_IMAGE_REPO}:${JAEGER_VERSION}"
 
-# Jaeger UI main HEAD as of 2026-04-01 resolves to commit
-# 386ab954c710199930f3d6cd165833acc1b2088e.
-readonly JAEGER_UI_VERSION="main-2026-04-01-386ab95"
+# Jaeger UI main HEAD as of 2026-04-03 resolves to commit
+# fc70e816ce97da9a29ded7808bf5c5e7239beb4b.
+readonly JAEGER_UI_VERSION="main-2026-04-03-fc70e81"
 readonly JAEGER_UI_GIT_TAG="main"
-readonly JAEGER_UI_COMMIT_SHA="386ab954c710199930f3d6cd165833acc1b2088e"
+readonly JAEGER_UI_COMMIT_SHA="fc70e816ce97da9a29ded7808bf5c5e7239beb4b"
 readonly JAEGER_UI_IMAGE_REPO="cloudtracing/jaeger-ui"
 
 # Jaeger v2 memory search requires search depth to be strictly less than
