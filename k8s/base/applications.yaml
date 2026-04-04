@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: catalog-api
-          image: cloudtracing/catalog:v1
+          image: cloudtracing/catalog:v5
           imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_DSN
@@ -71,7 +71,7 @@ spec:
     spec:
       containers:
         - name: inventory-api
-          image: cloudtracing/inventory:v1
+          image: cloudtracing/inventory:v5
           imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_DSN
@@ -124,7 +124,7 @@ spec:
     spec:
       containers:
         - name: orders-api
-          image: cloudtracing/orders:v1
+          image: cloudtracing/orders:v5
           imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_DSN
@@ -177,7 +177,7 @@ spec:
     spec:
       containers:
         - name: payments-api
-          image: cloudtracing/payments:v1
+          image: cloudtracing/payments:v5
           imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_DSN
@@ -230,7 +230,7 @@ spec:
     spec:
       containers:
         - name: edge-api
-          image: cloudtracing/edge:v1
+          image: cloudtracing/edge:v5
           imagePullPolicy: IfNotPresent
           env:
             - name: CATALOG_URL
@@ -279,7 +279,7 @@ spec:
     spec:
       containers:
         - name: shop-web
-          image: cloudtracing/shop-web:v1
+          image: cloudtracing/shop-web:v5
           imagePullPolicy: IfNotPresent
           env:
             - name: EDGE_URL
@@ -322,7 +322,7 @@ spec:
     spec:
       containers:
         - name: coach
-          image: cloudtracing/coach:v1
+          image: cloudtracing/coach:v5
           imagePullPolicy: IfNotPresent
           env:
             - name: SCENARIO_FILE

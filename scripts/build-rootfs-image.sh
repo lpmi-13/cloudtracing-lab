@@ -5,8 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 source "${repo_root}/scripts/lib/versions.sh"
 
-app_image_tag="${IMAGE_TAG:-v1}"
-rootfs_image="${ROOTFS_IMAGE:-cloudtracing-k3s-rootfs:v1}"
+app_image_tag="${IMAGE_TAG:-${DEFAULT_FIRST_PARTY_IMAGE_TAG}}"
+rootfs_image="${ROOTFS_IMAGE:-${DEFAULT_IXIMIUZ_ROOTFS_IMAGE}}"
 rootfs_release="${ROOTFS_RELEASE:-e2771a49}"
 build_images="${BUILD_IMAGES:-1}"
 pull_runtime_images="${PULL_RUNTIME_IMAGES:-1}"
@@ -84,6 +84,11 @@ copy_dir "${repo_root}/k8s" "${build_context}"
 copy_dir "${repo_root}/db" "${build_context}"
 copy_dir "${repo_root}/scenarios" "${build_context}"
 
+echo "Syncing copied manifests to app tag ${app_image_tag}..."
+bash "${repo_root}/scripts/update-version-refs.sh" \
+  --repo-root "${build_context}" \
+  --app-image-tag "${app_image_tag}"
+
 echo "Saving Kubernetes runtime images into the rootfs build context..."
 docker save -o "${build_context}/playground/iximiuz/k3s-images.tar" \
   "${app_images[@]}" \
@@ -99,6 +104,11 @@ if [[ "${push_image}" != "0" ]]; then
   echo "Pushing ${rootfs_image}..."
   docker push "${rootfs_image}"
 fi
+
+echo "Updating checked-in version references..."
+bash "${repo_root}/scripts/update-version-refs.sh" \
+  --app-image-tag "${app_image_tag}" \
+  --rootfs-image "${rootfs_image}"
 
 echo
 echo "Built rootfs image ${rootfs_image}"

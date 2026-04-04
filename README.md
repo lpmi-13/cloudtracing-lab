@@ -39,10 +39,10 @@ Supporting services:
 - the coach UI now includes lightweight progressive hints that help learners move from the entry span to the next service layer without revealing the answer
 - the application tier covers four trace patterns: broad search queries, inventory N+1 work, payment lock waits, and expensive order-history sorts
 - the optional shop UI remains available for manual storefront traffic, but the core activity is now coach + Jaeger
-- the local path is `bash scripts/up.sh`, which tears the lab down, rebuilds local `:latest` images, pushes them to the trusted registry, applies the local overlay, and waits for rollout
+- the local path is `bash scripts/up.sh`, which tears the lab down, rebuilds the local app images, pushes them to the trusted registry, applies the local overlay, and waits for rollout
 - the remote path is `bash scripts/publish-ghcr.sh` plus `bash scripts/deploy-remote.sh`, or simply `bash scripts/up-remote.sh`
 - the preloaded VM/rootfs path is still available for iximiuz-style playgrounds and fast-start environments
-- Jaeger now runs as a pinned v2 backend plus a separately built, pinned `jaeger-ui` sidecar served by Caddy, so UI updates can land independently of the backend image
+- Jaeger now runs as a pinned backend image plus a separately built, pinned `jaeger-ui` sidecar served by Caddy, so UI updates can land independently of the backend image
 
 ## Scenario Types
 
@@ -87,13 +87,13 @@ Use this as the quick "which script do I run?" reference:
 | `bash scripts/up.sh` | You want the normal one-command local bring-up. | Runs the full local flow: build app images, push them to the trusted local registry, deploy the local overlay, bind the local HTTP services to `localhost`, and wait for rollout. This is the default local entry point. |
 | `bash scripts/refresh-local-app.sh coach` | You changed one or a few app images and want the fastest local refresh without tearing the namespace down. | Rebuilds only the selected app images, pushes only those tags to the local registry, and restarts only the matching deployments. This exists for quick iteration on things like the coach UI or the custom Jaeger UI image. |
 | `bash scripts/down.sh` | You want to remove the local lab before a clean retry or before leaving the cluster idle. | Deletes the `trace-lab` namespace and waits for it to disappear, so the next local run starts from a clean slate. |
-| `bash scripts/build-images.sh` | You changed app code or Dockerfiles and need fresh first-party images. | Builds the Go, Python, and custom Jaeger UI images as `cloudtracing/*:${IMAGE_TAG:-latest}` for the normal local flow. This exists so image creation is consistent across local, remote, and rootfs flows. |
+| `bash scripts/build-images.sh` | You changed app code or Dockerfiles and need fresh first-party images. | Builds the Go, Python, and custom Jaeger UI images as `cloudtracing/*:${IMAGE_TAG}` for the normal local flow, using the script's default local tag when `IMAGE_TAG` is unset. This exists so image creation is consistent across local, remote, and rootfs flows. |
 | `bash scripts/load-images.sh` | You built local images and want `k3s` to be able to pull them. | Starts the local registry on `localhost:30300` if needed, then tags and pushes the app images there. We need it because local `k3s` does not read images directly from the host Docker daemon. |
-| `bash scripts/deploy.sh` | You changed Kubernetes manifests, changed overlays, or loaded fresh images and want them live. | Applies the selected kustomize overlay, removes legacy OpenSearch resources, restarts app deployments, and waits for rollout. We need it because a same-tag image update like `:latest` does not reliably refresh pods on `kubectl apply` alone. |
-| `bash scripts/publish-ghcr.sh` | You want to run the lab on a remote cluster that pulls from GHCR. | Publishes the first-party app images to `ghcr.io/.../cloudtracing/*:${IMAGE_TAG}` and optionally mirrors third-party runtime images too. If `IMAGE_TAG` is unset, it prompts for a tag and suggests the next `vN` based on the current GHCR app-image tags. |
+| `bash scripts/deploy.sh` | You changed Kubernetes manifests, changed overlays, or loaded fresh images and want them live. | Applies the selected kustomize overlay, removes legacy OpenSearch resources, restarts app deployments, and waits for rollout. We need it because a same-tag image update does not reliably refresh pods on `kubectl apply` alone. |
+| `bash scripts/publish-ghcr.sh` | You want to run the lab on a remote cluster that pulls from GHCR. | Publishes the first-party app images to `ghcr.io/.../cloudtracing/*:${IMAGE_TAG}` and optionally mirrors third-party runtime images too. If `IMAGE_TAG` is unset, it prompts for a tag and suggests the next `vN` based on the current GHCR app-image tags. After a successful publish, it also updates the checked-in first-party manifest tags to the same version. |
 | `bash scripts/deploy-remote.sh` | You already published images and want to deploy them to a remote cluster with host-based ingress. | Renders a temporary remote overlay with GHCR image rewrites, ingress hosts, optional pull secret wiring, and the remote Jaeger URL for the coach, then deploys it. Set `IMAGE_TAG` to the same tag you just published. |
 | `bash scripts/up-remote.sh` | You want the full GHCR-based remote flow in one command. | Runs `publish-ghcr.sh` and then `deploy-remote.sh`, carrying the chosen publish tag into the deploy step automatically. This is the shortest path for the generic remote-cluster workflow. |
-| `bash scripts/build-rootfs-image.sh` | You are preparing a fast-start VM or playground image and want the whole stack preloaded. | Builds a rootfs image containing the manifests plus all required container images. We need it for environments where boot speed matters more than pulling from a registry on first start. |
+| `bash scripts/build-rootfs-image.sh` | You are preparing a fast-start VM or playground image and want the whole stack preloaded. | Builds a rootfs image containing the manifests plus all required container images. We need it for environments where boot speed matters more than pulling from a registry on first start. It also updates the checked-in app-tag references and the iximiuz playground rootfs reference to the chosen build inputs. |
 | `bash scripts/deploy-preloaded-vm.sh` | You are inside the preloaded VM and want to deploy or redeploy the fixed-port VM overlay. | Deploys the VM overlay that binds coach, shop, and Jaeger directly on stable VM host ports. This exists because the VM path is exposed-port-based rather than host-based ingress. |
 
 ## Local Run Commands
@@ -110,7 +110,7 @@ That command:
 - builds the application images with Docker
 - pushes them to the local registry on `localhost:30300`
 - applies the local `k3s` manifests
-- restarts the application deployments so refreshed local `:latest` images are re-pulled
+- restarts the application deployments so refreshed local app images are re-pulled
 - waits for the `trace-lab` deployments to finish rolling out
 
 If you want to run the steps manually, use:
@@ -184,7 +184,7 @@ For this repo there are multiple first-party services, plus optional runtime dep
 ```bash
 export GHCR_NAMESPACE=ghcr.io/<your-user-or-org>
 export TRACE_LAB_BASE_DOMAIN=<public-ip>.sslip.io
-export IMAGE_TAG=v5
+export IMAGE_TAG=<image-tag>
 
 bash scripts/publish-ghcr.sh
 bash scripts/deploy-remote.sh
@@ -203,7 +203,7 @@ That remote path:
 
 - publishes the application images to `ghcr.io/<your-user-or-org>/cloudtracing/*:<IMAGE_TAG>`
 - publishes the custom Caddy-served Jaeger UI image to `ghcr.io/<your-user-or-org>/cloudtracing/jaeger-ui:<IMAGE_TAG>`
-- mirrors the third-party runtime images, including the pinned Jaeger v2 backend image, into `ghcr.io/<your-user-or-org>/cloudtracing-third-party/*` by default
+- mirrors the third-party runtime images, including the pinned Jaeger backend image, into `ghcr.io/<your-user-or-org>/cloudtracing-third-party/*` by default
 - renders a temporary remote kustomize overlay with `coach.<domain>`, `shop.<domain>`, and `jaeger.<domain>` ingress hosts
 - points the coach UI at the remote Jaeger URL
 - applies the manifests and waits for the rollouts
@@ -240,11 +240,13 @@ That path bakes the lab into a k3s-capable filesystem image by:
 Build it with:
 
 ```bash
-export ROOTFS_IMAGE=ghcr.io/<your-user-or-org>/cloudtracing-k3s-rootfs:v1
+export ROOTFS_IMAGE=ghcr.io/<your-user-or-org>/cloudtracing-k3s-rootfs:<rootfs-tag>
 
 bash scripts/build-rootfs-image.sh
 docker push "${ROOTFS_IMAGE}"
 ```
+
+After a successful rootfs build, the script also rewrites the checked-in first-party app tags and [playground/iximiuz/manifest.yaml](/home/adam/projects/cloudtracing/playground/iximiuz/manifest.yaml) so the repo points at the same versions that were just built.
 
 The rootfs build uses [playground/iximiuz/Dockerfile](/home/adam/projects/cloudtracing/playground/iximiuz/Dockerfile), and the bootstrap unit is [trace-lab-bootstrap.service](/home/adam/projects/cloudtracing/playground/iximiuz/image/trace-lab-bootstrap.service).
 
@@ -256,6 +258,6 @@ http://127.0.0.1:30081
 http://127.0.0.1:30686
 ```
 
-For iximiuz, expose coach and Jaeger publicly in the playground manifest, and only expose shop if you want manual storefront debugging available to learners. A starter manifest is included at [playground/iximiuz/manifest.yaml](/home/adam/projects/cloudtracing/playground/iximiuz/manifest.yaml); update the OCI image reference before using it.
+For iximiuz, expose coach and Jaeger publicly in the playground manifest, and only expose shop if you want manual storefront debugging available to learners. A starter manifest is included at [playground/iximiuz/manifest.yaml](/home/adam/projects/cloudtracing/playground/iximiuz/manifest.yaml); `scripts/build-rootfs-image.sh` now keeps its OCI image reference aligned with the chosen `ROOTFS_IMAGE`.
 
 The bootstrap script lives at [bootstrap-trace-lab.sh](/home/adam/projects/cloudtracing/playground/iximiuz/image/bootstrap-trace-lab.sh), and the in-VM deploy path it calls is [deploy-preloaded-vm.sh](/home/adam/projects/cloudtracing/scripts/deploy-preloaded-vm.sh).

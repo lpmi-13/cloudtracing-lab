@@ -183,6 +183,9 @@ if [[ "${mirror_upstream}" != "0" ]]; then
   mirror_upstream_image "${JAEGER_IMAGE}" "${ghcr_namespace}/cloudtracing-third-party/jaeger:${JAEGER_VERSION}"
 fi
 
+echo "Updating checked-in app image references..."
+bash "${repo_root}/scripts/update-version-refs.sh" --app-image-tag "${image_tag}"
+
 echo
 echo "Published application images to ${ghcr_namespace}/cloudtracing/*:${image_tag}"
 if [[ "${mirror_upstream}" != "0" ]]; then
