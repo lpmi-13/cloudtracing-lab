@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"cloudtracing/internal/scenario"
@@ -58,6 +59,8 @@ func QuerySpan(ctx context.Context, tracer trace.Tracer, label, stmt string, lat
 		trace.WithAttributes(
 			attribute.String("db.system", "postgresql"),
 			attribute.String("db.statement", stmt),
+			attribute.String("lab.query_label", label),
+			attribute.String("lab.statement_signature", statementSignature(stmt)),
 		),
 	)
 	defer span.End()
@@ -72,6 +75,14 @@ func QuerySpan(ctx context.Context, tracer trace.Tracer, label, stmt string, lat
 	}
 
 	return nil
+}
+
+func statementSignature(stmt string) string {
+	fields := strings.Fields(strings.TrimSpace(stmt))
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Join(fields, " ")
 }
 
 func OpenPostgres(driverName, dsn string) (*sql.DB, error) {

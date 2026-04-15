@@ -382,6 +382,8 @@ func tracedSpan(ctx context.Context, tracer trace.Tracer, name, system, statemen
 	ctx, span := tracer.Start(ctx, name, trace.WithAttributes(
 		attribute.String("db.system", system),
 		attribute.String("db.statement", statement),
+		attribute.String("lab.query_label", name),
+		attribute.String("lab.statement_signature", appStatementSignature(statement)),
 	))
 	defer span.End()
 
@@ -394,6 +396,10 @@ func tracedSpan(ctx context.Context, tracer trace.Tracer, name, system, statemen
 		return err
 	}
 	return nil
+}
+
+func appStatementSignature(statement string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(statement)), " ")
 }
 
 func mustEnv(key string) string {

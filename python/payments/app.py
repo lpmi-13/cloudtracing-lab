@@ -43,6 +43,8 @@ def charge():
                             {
                                 "db.system": "postgresql",
                                 "db.statement": fault.get("query_text", "select pg_sleep(1.2)"),
+                                "lab.query_label": fault.get("query_label", "payments.idempotency.lock_wait"),
+                                "lab.statement_signature": "select pg_sleep(%s)",
                             },
                         ) as span:
                             cursor.execute("select pg_sleep(%s)", (fault.get("latency_ms", 1200) / 1000.0,))
@@ -61,6 +63,8 @@ def charge():
                         {
                             "db.system": "postgresql",
                             "db.statement": "insert into payment_attempts (order_ref, amount, status) values ($1, $2, $3)",
+                            "lab.query_label": "payments.capture.insert",
+                            "lab.statement_signature": "insert into payment_attempts (order_ref, amount, status) values ($1, $2, $3)",
                         },
                     ):
                         cursor.execute(
