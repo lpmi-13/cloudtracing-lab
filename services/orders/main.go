@@ -72,6 +72,7 @@ func main() {
 
 func (s *ordersServer) history(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	app.AnnotateRequestSpanFromHeaders(ctx, r)
 	tracer := otel.Tracer("orders-api")
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {

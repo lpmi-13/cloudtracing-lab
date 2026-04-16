@@ -142,10 +142,12 @@ PAGE = """
 """
 
 
-def edge_headers(scenario_id: str):
+def edge_headers(scenario_id: str, batch_id: str):
     headers = {}
     if scenario_id:
         headers["X-Trace-Lab-Scenario"] = scenario_id
+    if batch_id:
+        headers["X-Trace-Lab-Batch"] = batch_id
     return inject_headers(headers)
 
 
@@ -170,11 +172,12 @@ def healthz():
 def search():
     with server_span(tracer, "GET /search", request.headers):
         scenario_id = request.args.get("scenario", "")
+        batch_id = request.headers.get("X-Trace-Lab-Batch", "")
         q = request.args.get("q", "trail")
         response = requests.get(
             f"{EDGE_URL}/api/search",
             params={"q": q},
-            headers=edge_headers(scenario_id),
+            headers=edge_headers(scenario_id, batch_id),
             timeout=8,
         )
         return render_template_string(
@@ -191,11 +194,12 @@ def search():
 def checkout():
     with server_span(tracer, "GET /checkout", request.headers):
         scenario_id = request.args.get("scenario", "")
+        batch_id = request.headers.get("X-Trace-Lab-Batch", "")
         sku = request.args.get("sku", "sku-14")
         response = requests.get(
             f"{EDGE_URL}/api/checkout",
             params={"sku": sku},
-            headers=edge_headers(scenario_id),
+            headers=edge_headers(scenario_id, batch_id),
             timeout=8,
         )
         return render_template_string(
@@ -212,11 +216,12 @@ def checkout():
 def order_history():
     with server_span(tracer, "GET /account/orders", request.headers):
         scenario_id = request.args.get("scenario", "")
+        batch_id = request.headers.get("X-Trace-Lab-Batch", "")
         user_id = request.args.get("user_id", "user-4")
         response = requests.get(
             f"{EDGE_URL}/api/orders/history",
             params={"user_id": user_id},
-            headers=edge_headers(scenario_id),
+            headers=edge_headers(scenario_id, batch_id),
             timeout=8,
         )
         return render_template_string(

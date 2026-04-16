@@ -17,6 +17,9 @@ import (
 )
 
 const ScenarioHeader = "X-Trace-Lab-Scenario"
+const BatchHeader = "X-Trace-Lab-Batch"
+const ScenarioAttribute = "lab.scenario_id"
+const BatchAttribute = "lab.batch_id"
 const startupDependencyTimeout = 2 * time.Minute
 const startupDependencyRetryInterval = 2 * time.Second
 
@@ -36,7 +39,25 @@ func LoadScenarios() (map[string]scenario.Definition, error) {
 }
 
 func ScenarioIDFromRequest(r *http.Request) string {
-	return r.Header.Get(ScenarioHeader)
+	return strings.TrimSpace(r.Header.Get(ScenarioHeader))
+}
+
+func BatchIDFromRequest(r *http.Request) string {
+	return strings.TrimSpace(r.Header.Get(BatchHeader))
+}
+
+func AnnotateRequestSpanFromHeaders(ctx context.Context, r *http.Request) {
+	AnnotateRequestSpan(ctx, ScenarioIDFromRequest(r), BatchIDFromRequest(r))
+}
+
+func AnnotateRequestSpan(ctx context.Context, scenarioID, batchID string) {
+	span := trace.SpanFromContext(ctx)
+	if scenarioID != "" {
+		span.SetAttributes(attribute.String(ScenarioAttribute, scenarioID))
+	}
+	if batchID != "" {
+		span.SetAttributes(attribute.String(BatchAttribute, batchID))
+	}
 }
 
 func FaultForRequest(index map[string]scenario.Definition, r *http.Request, serviceName string) scenario.FaultSpec {

@@ -14,14 +14,14 @@ FROM ${NODE_IMAGE} AS build
 ARG JAEGER_UI_VERSION=main-2026-04-01-386ab95
 ARG JAEGER_UI_GIT_TAG=main
 ARG JAEGER_UI_COMMIT_SHA=386ab954c710199930f3d6cd165833acc1b2088e
-ARG JAEGER_UI_SEARCH_MAX_LIMIT=14
+ARG JAEGER_UI_SEARCH_MAX_LIMIT=79
 WORKDIR /src
 COPY --from=source /src/repo/ ./
 RUN npm ci --ignore-scripts
 RUN npm run --workspace @jaegertracing/plexus build
-# The lab stores exactly 15 traces per activity batch, and Jaeger v2 requires
-# query search depth to be strictly less than max_traces. Patch the upstream UI
-# defaults so it stops issuing invalid limit=20 searches against this backend.
+# Jaeger v2 memory search requires query search depth to be strictly less than
+# max_traces. Patch the upstream UI defaults so they stay within the lab's
+# configured in-memory retention window.
 RUN sed -i "s/export const DEFAULT_LIMIT = 20;/export const DEFAULT_LIMIT = ${JAEGER_UI_SEARCH_MAX_LIMIT};/" packages/jaeger-ui/src/constants/search-form.ts \
     && sed -i "s|const JAEGER_CONFIG = DEFAULT_CONFIG;|const JAEGER_CONFIG = {\"search\":{\"maxLimit\":${JAEGER_UI_SEARCH_MAX_LIMIT}}};|" packages/jaeger-ui/index.html
 RUN cd packages/jaeger-ui \

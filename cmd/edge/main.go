@@ -97,14 +97,16 @@ func main() {
 
 func (s *edgeServer) search(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	app.AnnotateRequestSpanFromHeaders(ctx, r)
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		q = "trail"
 	}
 	scenarioID := app.ScenarioIDFromRequest(r)
+	batchID := app.BatchIDFromRequest(r)
 
 	var catalog searchResponse
-	status, err := httpx.DoJSON(ctx, s.client, http.MethodGet, fmt.Sprintf("%s/internal/search?q=%s", s.catalogURL, url.QueryEscape(q)), nil, scenarioID, &catalog)
+	status, err := httpx.DoJSON(ctx, s.client, http.MethodGet, fmt.Sprintf("%s/internal/search?q=%s", s.catalogURL, url.QueryEscape(q)), nil, scenarioID, batchID, &catalog)
 	if err != nil || status >= http.StatusBadRequest {
 		http.Error(w, fmt.Sprintf("catalog search failed: %v", err), http.StatusBadGateway)
 		return
@@ -120,7 +122,7 @@ func (s *edgeServer) search(w http.ResponseWriter, r *http.Request) {
 
 	var availability availabilityResponse
 	if len(skus) > 0 {
-		_, _ = httpx.DoJSON(ctx, s.client, http.MethodGet, fmt.Sprintf("%s/internal/availability?skus=%s", s.inventoryURL, url.QueryEscape(strings.Join(skus, ","))), nil, scenarioID, &availability)
+		_, _ = httpx.DoJSON(ctx, s.client, http.MethodGet, fmt.Sprintf("%s/internal/availability?skus=%s", s.inventoryURL, url.QueryEscape(strings.Join(skus, ","))), nil, scenarioID, batchID, &availability)
 	}
 
 	app.WriteJSON(w, http.StatusOK, map[string]any{
@@ -131,21 +133,23 @@ func (s *edgeServer) search(w http.ResponseWriter, r *http.Request) {
 
 func (s *edgeServer) checkout(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	app.AnnotateRequestSpanFromHeaders(ctx, r)
 	sku := r.URL.Query().Get("sku")
 	if sku == "" {
 		sku = "sku-14"
 	}
 	scenarioID := app.ScenarioIDFromRequest(r)
+	batchID := app.BatchIDFromRequest(r)
 
 	var details product
-	status, err := httpx.DoJSON(ctx, s.client, http.MethodGet, fmt.Sprintf("%s/internal/product?sku=%s", s.catalogURL, url.QueryEscape(sku)), nil, scenarioID, &details)
+	status, err := httpx.DoJSON(ctx, s.client, http.MethodGet, fmt.Sprintf("%s/internal/product?sku=%s", s.catalogURL, url.QueryEscape(sku)), nil, scenarioID, batchID, &details)
 	if err != nil || status >= http.StatusBadRequest {
 		http.Error(w, fmt.Sprintf("catalog detail failed: %v", err), http.StatusBadGateway)
 		return
 	}
 
 	var reserve reserveResponse
-	status, err = httpx.DoJSON(ctx, s.client, http.MethodGet, fmt.Sprintf("%s/internal/reserve?sku=%s", s.inventoryURL, url.QueryEscape(sku)), nil, scenarioID, &reserve)
+	status, err = httpx.DoJSON(ctx, s.client, http.MethodGet, fmt.Sprintf("%s/internal/reserve?sku=%s", s.inventoryURL, url.QueryEscape(sku)), nil, scenarioID, batchID, &reserve)
 	if err != nil || status >= http.StatusBadRequest {
 		http.Error(w, fmt.Sprintf("inventory reserve failed: %v", err), http.StatusBadGateway)
 		return
@@ -156,7 +160,7 @@ func (s *edgeServer) checkout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var payment paymentResponse
-	status, err = httpx.DoJSON(ctx, s.client, http.MethodGet, fmt.Sprintf("%s/internal/charge?sku=%s&amount=%.2f", s.paymentsURL, url.QueryEscape(sku), details.Price), nil, scenarioID, &payment)
+	status, err = httpx.DoJSON(ctx, s.client, http.MethodGet, fmt.Sprintf("%s/internal/charge?sku=%s&amount=%.2f", s.paymentsURL, url.QueryEscape(sku), details.Price), nil, scenarioID, batchID, &payment)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("payment call failed: %v", err), http.StatusBadGateway)
 		return
@@ -178,14 +182,16 @@ func (s *edgeServer) checkout(w http.ResponseWriter, r *http.Request) {
 
 func (s *edgeServer) history(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	app.AnnotateRequestSpanFromHeaders(ctx, r)
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
 		userID = "user-4"
 	}
 	scenarioID := app.ScenarioIDFromRequest(r)
+	batchID := app.BatchIDFromRequest(r)
 
 	var orders ordersResponse
-	status, err := httpx.DoJSON(ctx, s.client, http.MethodGet, fmt.Sprintf("%s/internal/history?user_id=%s", s.ordersURL, url.QueryEscape(userID)), nil, scenarioID, &orders)
+	status, err := httpx.DoJSON(ctx, s.client, http.MethodGet, fmt.Sprintf("%s/internal/history?user_id=%s", s.ordersURL, url.QueryEscape(userID)), nil, scenarioID, batchID, &orders)
 	if err != nil || status >= http.StatusBadRequest {
 		http.Error(w, fmt.Sprintf("order history failed: %v", err), http.StatusBadGateway)
 		return
@@ -193,7 +199,7 @@ func (s *edgeServer) history(w http.ResponseWriter, r *http.Request) {
 
 	var featured product
 	if len(orders.Orders) > 0 {
-		_, _ = httpx.DoJSON(ctx, s.client, http.MethodGet, fmt.Sprintf("%s/internal/product?sku=%s", s.catalogURL, url.QueryEscape(orders.Orders[0].SKU)), nil, scenarioID, &featured)
+		_, _ = httpx.DoJSON(ctx, s.client, http.MethodGet, fmt.Sprintf("%s/internal/product?sku=%s", s.catalogURL, url.QueryEscape(orders.Orders[0].SKU)), nil, scenarioID, batchID, &featured)
 	}
 
 	app.WriteJSON(w, http.StatusOK, map[string]any{

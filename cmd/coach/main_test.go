@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"cloudtracing/internal/app"
 	"cloudtracing/internal/scenario"
 )
 
@@ -226,6 +227,44 @@ func TestUnlockingDoesNotSkipAheadWhenAnotherLevelIsSelected(t *testing.T) {
 	}
 }
 
+func TestEffectiveTraceSearchLimitClampsToJaegerMax(t *testing.T) {
+	s := &coachServer{jaegerQueryMaxLimit: 14}
+
+	if got := s.effectiveTraceSearchLimit(4, 30); got != 14 {
+		t.Fatalf("expected limit 14 for requested 30, got %d", got)
+	}
+	if got := s.effectiveTraceSearchLimit(4, 0); got != 14 {
+		t.Fatalf("expected default limit to clamp at 14, got %d", got)
+	}
+	if got := s.effectiveTraceSearchLimit(4, 3); got != 8 {
+		t.Fatalf("expected need-driven expansion to 8, got %d", got)
+	}
+}
+
+func TestEffectiveTraceSearchLimitHonorsHigherConfiguredMax(t *testing.T) {
+	s := &coachServer{jaegerQueryMaxLimit: 50}
+
+	if got := s.effectiveTraceSearchLimit(4, 30); got != 30 {
+		t.Fatalf("expected configured max to allow 30, got %d", got)
+	}
+}
+
+func TestFilterRecentTracesRequiresMatchingBatchID(t *testing.T) {
+	def := firstScenarioByLevel(t, testScenarioSet(), 1)
+	want := traceFixture("wanted", def, nil)
+	want.Start = time.Now()
+	want.Spans[0].Tags[app.BatchAttribute] = "batch-2"
+
+	skip := traceFixture("skip", def, nil)
+	skip.Start = want.Start.Add(20 * time.Millisecond)
+	skip.Spans[0].Tags[app.BatchAttribute] = "batch-1"
+
+	got := filterRecentTraces([]traceRecord{skip, want}, want.Start.Add(-50*time.Millisecond), "batch-2")
+	if len(got) != 1 || got[0].ID != "wanted" {
+		t.Fatalf("expected only batch-2 trace, got %+v", got)
+	}
+}
+
 func newTestCoachServer(t *testing.T, defs []scenario.Definition) *coachServer {
 	t.Helper()
 
@@ -235,12 +274,13 @@ func newTestCoachServer(t *testing.T, defs []scenario.Definition) *coachServer {
 	}
 
 	return &coachServer{
-		client:      http.DefaultClient,
-		webURL:      "http://example.test",
-		scenarioSet: defs,
-		levels:      levels,
-		state:       newLearnerSession(levels),
-		subscribers: map[int]chan coachSnapshot{},
+		client:              http.DefaultClient,
+		jaegerQueryMaxLimit: defaultJaegerQueryMaxLimit,
+		webURL:              "http://example.test",
+		scenarioSet:         defs,
+		levels:              levels,
+		state:               newLearnerSession(levels),
+		subscribers:         map[int]chan coachSnapshot{},
 	}
 }
 

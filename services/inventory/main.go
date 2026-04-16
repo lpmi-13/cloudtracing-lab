@@ -66,6 +66,7 @@ func main() {
 
 func (s *inventoryServer) reserve(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	app.AnnotateRequestSpanFromHeaders(ctx, r)
 	tracer := otel.Tracer("inventory-api")
 	sku := r.URL.Query().Get("sku")
 	if sku == "" {
@@ -119,6 +120,7 @@ func (s *inventoryServer) reserve(w http.ResponseWriter, r *http.Request) {
 
 func (s *inventoryServer) availability(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	app.AnnotateRequestSpanFromHeaders(ctx, r)
 	tracer := otel.Tracer("inventory-api")
 	raw := r.URL.Query().Get("skus")
 	if raw == "" {

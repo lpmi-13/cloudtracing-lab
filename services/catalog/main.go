@@ -116,6 +116,7 @@ func main() {
 
 func (s *catalogServer) search(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	app.AnnotateRequestSpanFromHeaders(ctx, r)
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		q = "trail"
@@ -145,6 +146,7 @@ func (s *catalogServer) search(w http.ResponseWriter, r *http.Request) {
 
 func (s *catalogServer) product(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	app.AnnotateRequestSpanFromHeaders(ctx, r)
 	tracer := otel.Tracer("catalog-api")
 	sku := r.URL.Query().Get("sku")
 	if sku == "" {

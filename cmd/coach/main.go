@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,14 +21,16 @@ import (
 )
 
 type coachServer struct {
-	client           *http.Client
-	jaegerURL        string
-	webURL           string
-	scenarios        map[string]scenario.Definition
-	scenarioSet      []scenario.Definition
-	levels           []levelDefinition
-	page             *template.Template
-	findRecentTraces func(ctx context.Context, service, operation string, since time.Time, need, limit int) ([]traceRecord, error)
+	client              *http.Client
+	jaegerUIURL         string
+	jaegerQueryURL      string
+	jaegerQueryMaxLimit int
+	webURL              string
+	scenarios           map[string]scenario.Definition
+	scenarioSet         []scenario.Definition
+	levels              []levelDefinition
+	page                *template.Template
+	findRecentTraces    func(ctx context.Context, service, operation string, since time.Time, need, limit int, batchID string) ([]traceRecord, error)
 
 	actionMu sync.Mutex
 	mu       sync.RWMutex
@@ -99,16 +102,29 @@ func main() {
 
 	s := &coachServer{
 		client:      &http.Client{Timeout: 10 * time.Second},
-		jaegerURL:   strings.TrimRight(defaultEnv("JAEGER_UI_URL", ""), "/"),
-		webURL:      strings.TrimRight(defaultEnv("WEB_URL", "http://shop-web:8080"), "/"),
-		scenarios:   scenarios,
-		scenarioSet: scenarioSet,
-		levels:      levels,
-		page:        template.Must(template.New("page").Parse(pageTemplate)),
-		state:       newLearnerSession(levels),
-		subscribers: map[int]chan coachSnapshot{},
+		jaegerUIURL: strings.TrimRight(defaultEnv("JAEGER_UI_URL", ""), "/"),
+		jaegerQueryURL: strings.TrimRight(defaultEnv(
+			"JAEGER_QUERY_URL",
+			defaultEnv("JAEGER_UI_URL", ""),
+		), "/"),
+		jaegerQueryMaxLimit: defaultEnvInt("JAEGER_QUERY_MAX_LIMIT", defaultJaegerQueryMaxLimit),
+		webURL:              strings.TrimRight(defaultEnv("WEB_URL", "http://shop-web:8080"), "/"),
+		scenarios:           scenarios,
+		scenarioSet:         scenarioSet,
+		levels:              levels,
+		page:                template.Must(template.New("page").Parse(pageTemplate)),
+		state:               newLearnerSession(levels),
+		subscribers:         map[int]chan coachSnapshot{},
 	}
 
+	addr := ":8080"
+	log.Printf("coach listening on %s", addr)
+	if err := http.ListenAndServe(addr, s.routes()); err != nil {
+		log.Fatalf("listen: %v", err)
+	}
+}
+
+func (s *coachServer) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.HandlerFunc(s.index))
 	mux.Handle("/api/state", http.HandlerFunc(s.stateSnapshot))
@@ -123,12 +139,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	}))
-
-	addr := ":8080"
-	log.Printf("coach listening on %s", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatalf("listen: %v", err)
-	}
+	return mux
 }
 
 func (s *coachServer) index(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +149,7 @@ func (s *coachServer) index(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	if err != nil {
+		log.Printf("prepare selected challenge for %s (%s): %v", s.levelLabel(selectedLevel), def.ID, err)
 		s.setFeedbackLocked("The current challenge is loaded, but automatic trace generation failed. Refresh or request a new challenge and try again.", false)
 	} else if generated > 0 {
 		s.setFeedbackLocked(fmt.Sprintf("Prepared %s for %s. %s", freshTraceText(generated), s.levelLabel(selectedLevel), focusTraceFeedback(def)), false)
@@ -153,7 +165,7 @@ func (s *coachServer) index(w http.ResponseWriter, r *http.Request) {
 	payload, _ := json.Marshal(snapshot)
 	data := map[string]any{
 		"InitialState": template.JS(payload),
-		"JaegerURL":    s.jaegerURL,
+		"JaegerURL":    s.jaegerUIURL,
 	}
 	if err := s.page.Execute(w, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -220,6 +232,7 @@ func (s *coachServer) nextChallenge(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	if err != nil {
+		log.Printf("prepare new challenge for %s (%s): %v", s.levelLabel(level), next.ID, err)
 		s.setFeedbackLocked(fmt.Sprintf("A fresh challenge was selected for %s, but automatic trace generation failed. Refresh or try again.", s.levelLabel(level)), false)
 	} else if generated > 0 {
 		s.setFeedbackLocked(fmt.Sprintf("Prepared %s for a new challenge in %s. %s", freshTraceText(generated), s.levelLabel(level), focusTraceFeedback(next)), false)
@@ -279,6 +292,7 @@ func (s *coachServer) selectLevel(w http.ResponseWriter, r *http.Request) {
 		message += fmt.Sprintf(" %s is now unlocked.", s.levelLabel(unlockedLevel))
 	}
 	if err != nil {
+		log.Printf("prepare selected level challenge for %s (%s): %v", s.levelLabel(req.Level), selected.ID, err)
 		message += " The challenge loaded, but automatic trace generation failed. Refresh or request a new challenge and try again."
 	} else if generated > 0 {
 		message += fmt.Sprintf(" Prepared %s. %s", freshTraceText(generated), focusTraceFeedback(selected))
@@ -446,7 +460,7 @@ func (s *coachServer) generateScenarioTraffic(ctx context.Context, def scenario.
 	var firstErr error
 	var successes int
 	for _, trafficPath := range s.trafficPathsForScenario(def) {
-		pathSuccesses, err := s.generateTrafficRequests(ctx, trafficPath, def.ID, count)
+		pathSuccesses, err := s.generateTrafficRequests(ctx, trafficPath, def.ID, newTraceBatchID(), count)
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}
@@ -519,6 +533,20 @@ func defaultEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func defaultEnvInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		log.Printf("invalid %s=%q, using %d", key, value, fallback)
+		return fallback
+	}
+	return parsed
 }
 
 func freshTraceText(count int) string {

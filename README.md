@@ -166,10 +166,10 @@ The local overlay also binds the internal HTTP services to fixed loopback ports 
 3. Start at the web tier span, then follow the request downstream through `edge-api` into the backing service spans.
 4. Identify the component creating the real slowdown or failure, not just the first upstream service that noticed it. Pay close attention to long database, Redis, or Meilisearch spans.
 5. If you get stuck moving from the entry span into the real suspect branch, use the `Need a hint?` panel in the coach UI for a minimal nudge.
-6. Go back to the coach UI and submit the culprit service plus issue type. If you are wrong, the current scenario stays in place; if you want a fresh batch, click `New Scenario`.
+6. Go back to the coach UI and submit the diagnosis plus whatever evidence the current level requires. If you are wrong, the current scenario stays in place; if you want a fresh batch, click `New Scenario`.
 7. Repeat until you solve it or move to a new scenario.
 
-Jaeger now keeps only the most recent activity-sized batch in memory. The local deployment caps in-memory storage at 15 traces, so each 5-per-endpoint batch replaces the previous one without waiting for Jaeger to restart.
+Jaeger now keeps multiple recent activity batches in memory. The coach tags every generated batch and fetches only the tagged traces it just seeded, so the lab can retain a broader working set without blurring the evidence for the current challenge.
 
 If you want to explore the storefront manually alongside the guided activity, `http://localhost:9001` still exposes search, checkout, and account-history flows, but the coach no longer depends on manual trace generation.
 

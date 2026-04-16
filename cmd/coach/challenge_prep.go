@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cloudtracing/internal/app"
@@ -72,7 +73,8 @@ func (s *coachServer) seedTraceGroup(ctx context.Context, def scenario.Definitio
 	}
 
 	since := time.Now()
-	generated, err := s.generateTrafficRequests(ctx, trafficPath, scenarioID, count)
+	batchID := newTraceBatchID()
+	generated, err := s.generateTrafficRequests(ctx, trafficPath, scenarioID, batchID, count)
 	if err != nil && generated == 0 {
 		return nil, 0, err
 	}
@@ -80,7 +82,7 @@ func (s *coachServer) seedTraceGroup(ctx context.Context, def scenario.Definitio
 		return nil, generated, fmt.Errorf("generated %d/%d requests for %s", generated, count, def.ID)
 	}
 
-	traces, traceErr := s.recentTraces(ctx, def.FocusService, def.FocusOperation, since, count, searchLimit)
+	traces, traceErr := s.recentTraces(ctx, def.FocusService, def.FocusOperation, since, count, searchLimit, batchID)
 	if traceErr != nil {
 		return nil, generated, traceErr
 	}
@@ -106,7 +108,7 @@ func (s *coachServer) generateBackgroundTraffic(ctx context.Context, def scenari
 	)
 	for i := 0; i < total; i++ {
 		path := paths[i%len(paths)]
-		count, err := s.generateTrafficRequests(ctx, path, "", 1)
+		count, err := s.generateTrafficRequests(ctx, path, "", newTraceBatchID(), 1)
 		generated += count
 		if err != nil && firstErr == nil {
 			firstErr = err
@@ -131,7 +133,13 @@ func (s *coachServer) backgroundPathsForScenario(def scenario.Definition) []stri
 	return paths
 }
 
-func (s *coachServer) generateTrafficRequests(ctx context.Context, trafficPath, scenarioID string, count int) (int, error) {
+var traceBatchSeq atomic.Uint64
+
+func newTraceBatchID() string {
+	return fmt.Sprintf("batch-%d", traceBatchSeq.Add(1))
+}
+
+func (s *coachServer) generateTrafficRequests(ctx context.Context, trafficPath, scenarioID, batchID string, count int) (int, error) {
 	target := s.webURL + trafficPath
 	separator := "&"
 	if !strings.Contains(trafficPath, "?") {
@@ -150,7 +158,7 @@ func (s *coachServer) generateTrafficRequests(ctx context.Context, trafficPath, 
 		go func() {
 			defer wg.Done()
 
-			req, err := httpRequestWithScenario(ctx, target+separator+"scenario="+scenarioID, scenarioID)
+			req, err := httpRequestWithScenario(ctx, target+separator+"scenario="+scenarioID, scenarioID, batchID)
 			if err != nil {
 				mu.Lock()
 				if firstErr == nil {
@@ -184,13 +192,16 @@ func (s *coachServer) generateTrafficRequests(ctx context.Context, trafficPath, 
 	return successes, firstErr
 }
 
-func httpRequestWithScenario(ctx context.Context, target, scenarioID string) (*http.Request, error) {
+func httpRequestWithScenario(ctx context.Context, target, scenarioID, batchID string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, err
 	}
 	if scenarioID != "" {
 		req.Header.Set(app.ScenarioHeader, scenarioID)
+	}
+	if batchID != "" {
+		req.Header.Set(app.BatchHeader, batchID)
 	}
 	return req, nil
 }

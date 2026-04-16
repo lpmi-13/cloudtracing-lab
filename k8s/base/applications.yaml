@@ -325,6 +325,10 @@ spec:
           image: cloudtracing/coach:v5
           imagePullPolicy: IfNotPresent
           env:
+            - name: JAEGER_QUERY_URL
+              value: http://$(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_QUERY_API)
+            - name: JAEGER_QUERY_MAX_LIMIT
+              value: "79"
             - name: SCENARIO_FILE
               value: /config/scenarios.json
             - name: WEB_URL

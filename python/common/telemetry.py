@@ -8,6 +8,9 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.trace import SpanKind
 
+SCENARIO_HEADER = "X-Trace-Lab-Scenario"
+BATCH_HEADER = "X-Trace-Lab-Batch"
+
 
 def init_telemetry(service_name: str):
     endpoint = os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://localhost:4318/v1/traces")
@@ -29,6 +32,12 @@ def init_telemetry(service_name: str):
 def server_span(tracer, name: str, headers):
     ctx = propagate.extract(headers)
     with tracer.start_as_current_span(name, context=ctx, kind=SpanKind.SERVER) as span:
+        scenario_id = (headers.get(SCENARIO_HEADER) or "").strip()
+        if scenario_id:
+            span.set_attribute("lab.scenario_id", scenario_id)
+        batch_id = (headers.get(BATCH_HEADER) or "").strip()
+        if batch_id:
+            span.set_attribute("lab.batch_id", batch_id)
         yield span
 
 

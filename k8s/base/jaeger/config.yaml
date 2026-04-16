@@ -29,7 +29,7 @@ extensions:
     backends:
       in_memory:
         memory:
-          max_traces: 15
+          max_traces: 80
 
 receivers:
   otlp:

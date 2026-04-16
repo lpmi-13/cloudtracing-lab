@@ -12,7 +12,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 )
 
-func DoJSON(ctx context.Context, client *http.Client, method, target string, body io.Reader, scenarioID string, out any) (int, error) {
+func DoJSON(ctx context.Context, client *http.Client, method, target string, body io.Reader, scenarioID, batchID string, out any) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
 		return 0, fmt.Errorf("new request: %w", err)
@@ -24,6 +24,9 @@ func DoJSON(ctx context.Context, client *http.Client, method, target string, bod
 	}
 	if scenarioID != "" {
 		req.Header.Set("X-Trace-Lab-Scenario", scenarioID)
+	}
+	if batchID != "" {
+		req.Header.Set("X-Trace-Lab-Batch", batchID)
 	}
 
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))

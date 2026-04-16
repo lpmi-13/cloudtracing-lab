@@ -31,6 +31,6 @@ readonly JAEGER_UI_COMMIT_SHA="fc70e816ce97da9a29ded7808bf5c5e7239beb4b"
 readonly JAEGER_UI_IMAGE_REPO="cloudtracing/jaeger-ui"
 
 # Jaeger v2 memory search requires search depth to be strictly less than
-# memory.max_traces. The lab keeps 15 traces per activity batch, so the UI must
-# cap search results below that.
-readonly JAEGER_UI_SEARCH_MAX_LIMIT="14"
+# memory.max_traces. Keep the UI search max aligned with the configured
+# in-memory retention window.
+readonly JAEGER_UI_SEARCH_MAX_LIMIT="79"

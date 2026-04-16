@@ -10,9 +10,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"cloudtracing/internal/app"
 )
 
 const defaultTraceSearchLimit = 40
+const defaultJaegerQueryMaxLimit = 79
 
 type jaegerTraceSearchResponse struct {
 	Data []jaegerTrace `json:"data"`
@@ -43,32 +46,27 @@ type jaegerTag struct {
 }
 
 func (s *coachServer) traceURL(traceID string) string {
-	if s.jaegerURL == "" || traceID == "" {
+	if s.jaegerUIURL == "" || traceID == "" {
 		return ""
 	}
-	return s.jaegerURL + "/trace/" + traceID
+	return s.jaegerUIURL + "/trace/" + traceID
 }
 
-func (s *coachServer) recentTraces(ctx context.Context, service, operation string, since time.Time, need, limit int) ([]traceRecord, error) {
+func (s *coachServer) recentTraces(ctx context.Context, service, operation string, since time.Time, need, limit int, batchID string) ([]traceRecord, error) {
 	if s.findRecentTraces != nil {
-		return s.findRecentTraces(ctx, service, operation, since, need, limit)
+		return s.findRecentTraces(ctx, service, operation, since, need, limit, batchID)
 	}
-	return s.fetchRecentTraces(ctx, service, operation, since, need, limit)
+	return s.fetchRecentTraces(ctx, service, operation, since, need, limit, batchID)
 }
 
-func (s *coachServer) fetchRecentTraces(ctx context.Context, service, operation string, since time.Time, need, limit int) ([]traceRecord, error) {
-	if s.jaegerURL == "" {
-		return nil, fmt.Errorf("JAEGER_UI_URL is not configured")
+func (s *coachServer) fetchRecentTraces(ctx context.Context, service, operation string, since time.Time, need, limit int, batchID string) ([]traceRecord, error) {
+	if s.jaegerQueryURL == "" {
+		return nil, fmt.Errorf("JAEGER_QUERY_URL is not configured")
 	}
 	if need <= 0 {
 		return nil, nil
 	}
-	if limit < need*2 {
-		limit = need * 2
-	}
-	if limit < defaultTraceSearchLimit {
-		limit = defaultTraceSearchLimit
-	}
+	limit = s.effectiveTraceSearchLimit(need, limit)
 
 	deadline := time.Now().Add(8 * time.Second)
 	var last []traceRecord
@@ -77,7 +75,7 @@ func (s *coachServer) fetchRecentTraces(ctx context.Context, service, operation 
 	for {
 		records, err := s.searchTraces(ctx, service, operation, limit)
 		if err == nil {
-			filtered := filterRecentTraces(records, since)
+			filtered := filterRecentTraces(records, since, batchID)
 			if len(filtered) >= need {
 				return filtered[:need], nil
 			}
@@ -104,6 +102,30 @@ func (s *coachServer) fetchRecentTraces(ctx context.Context, service, operation 
 	}
 }
 
+func (s *coachServer) effectiveTraceSearchLimit(need, requested int) int {
+	if need <= 0 {
+		return 0
+	}
+	if requested <= 0 {
+		requested = defaultTraceSearchLimit
+	}
+	if requested < need*2 {
+		requested = need * 2
+	}
+
+	maxLimit := s.jaegerQueryMaxLimit
+	if maxLimit <= 0 {
+		maxLimit = defaultJaegerQueryMaxLimit
+	}
+	if requested > maxLimit {
+		requested = maxLimit
+	}
+	if requested < need && maxLimit >= need {
+		requested = need
+	}
+	return requested
+}
+
 func (s *coachServer) searchTraces(ctx context.Context, service, operation string, limit int) ([]traceRecord, error) {
 	values := url.Values{}
 	values.Set("service", service)
@@ -113,7 +135,7 @@ func (s *coachServer) searchTraces(ctx context.Context, service, operation strin
 	values.Set("limit", strconv.Itoa(limit))
 	values.Set("lookback", "1h")
 
-	endpoint := s.jaegerURL + "/api/traces?" + values.Encode()
+	endpoint := s.jaegerQueryURL + "/api/traces?" + values.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -249,13 +271,16 @@ func isErrorSpan(tags map[string]string) bool {
 	return false
 }
 
-func filterRecentTraces(records []traceRecord, since time.Time) []traceRecord {
+func filterRecentTraces(records []traceRecord, since time.Time, batchID string) []traceRecord {
 	cutoff := since.Add(-250 * time.Millisecond)
 	filtered := make([]traceRecord, 0, len(records))
 	seen := map[string]struct{}{}
 
 	for _, record := range records {
 		if record.Start.Before(cutoff) {
+			continue
+		}
+		if batchID != "" && !traceHasAttribute(record, app.BatchAttribute, batchID) {
 			continue
 		}
 		if _, ok := seen[record.ID]; ok {
@@ -266,4 +291,13 @@ func filterRecentTraces(records []traceRecord, since time.Time) []traceRecord {
 	}
 	sortTraceRecords(filtered)
 	return filtered
+}
+
+func traceHasAttribute(record traceRecord, key, want string) bool {
+	for _, span := range record.Spans {
+		if span.Tags[key] == want {
+			return true
+		}
+	}
+	return false
 }
