@@ -52,6 +52,32 @@ func (s *coachServer) traceURL(traceID string) string {
 	return s.jaegerUIURL + "/trace/" + traceID
 }
 
+func (s *coachServer) searchURL(service, operation string, limit int, tags map[string]string) string {
+	if s.jaegerUIURL == "" {
+		return ""
+	}
+
+	values := url.Values{}
+	if service != "" {
+		values.Set("service", service)
+	}
+	if operation != "" {
+		values.Set("operation", operation)
+	}
+	if limit > 0 {
+		values.Set("limit", strconv.Itoa(limit))
+	}
+	if len(tags) > 0 {
+		encoded, err := json.Marshal(tags)
+		if err == nil {
+			values.Set("tags", string(encoded))
+		}
+	}
+	values.Set("lookback", "1h")
+
+	return s.jaegerUIURL + "/search?" + values.Encode()
+}
+
 func (s *coachServer) recentTraces(ctx context.Context, service, operation string, since time.Time, need, limit int, batchID string) ([]traceRecord, error) {
 	if s.findRecentTraces != nil {
 		return s.findRecentTraces(ctx, service, operation, since, need, limit, batchID)

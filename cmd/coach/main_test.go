@@ -41,13 +41,30 @@ func TestBuildLevelsRequiresThreeVariantsPerLevel(t *testing.T) {
 	}
 }
 
-func TestBuildPreparedChallengeCreatesCulpritSpanAssessment(t *testing.T) {
+func TestNewLearnerSessionStartsWithoutVisibleFeedback(t *testing.T) {
+	levels, err := buildLevels(testScenarioSet())
+	if err != nil {
+		t.Fatalf("buildLevels: %v", err)
+	}
+
+	session := newLearnerSession(levels)
+	if session.HasFeedback {
+		t.Fatal("expected feedback to start hidden")
+	}
+	if session.Feedback != "" {
+		t.Fatalf("expected no initial feedback message, got %q", session.Feedback)
+	}
+}
+
+func TestBuildPreparedChallengeCreatesTraceSearchSpanAssessment(t *testing.T) {
 	def := firstScenarioByLevel(t, testScenarioSet(), 1)
 	challenge, err := buildPreparedChallenge(def, traceGroups{
 		Faulty: []traceRecord{
-			traceFixture("trace-1", def, nil),
+			traceFixture("trace-1", def, map[string]string{app.BatchAttribute: "batch-17"}),
 		},
-	}, func(id string) string { return "/trace/" + id })
+	}, func(id string) string { return "/trace/" + id }, func(service, operation string, limit int, tags map[string]string) string {
+		return fmt.Sprintf("/search?service=%s&operation=%s&limit=%d&batch=%s", service, operation, limit, tags[app.BatchAttribute])
+	})
 	if err != nil {
 		t.Fatalf("buildPreparedChallenge: %v", err)
 	}
@@ -55,41 +72,56 @@ func TestBuildPreparedChallengeCreatesCulpritSpanAssessment(t *testing.T) {
 	if !challenge.Public.Ready {
 		t.Fatal("expected challenge to be ready")
 	}
-	if challenge.Public.ReferenceTrace == nil || challenge.Public.ReferenceTrace.ID != "trace-1" {
-		t.Fatalf("expected reference trace trace-1, got %+v", challenge.Public.ReferenceTrace)
+	if challenge.Public.InvestigationLink == nil || challenge.Public.InvestigationLink.URL == "" {
+		t.Fatalf("expected investigation link, got %+v", challenge.Public.InvestigationLink)
 	}
-	if len(challenge.Public.SpanChoices) == 0 {
-		t.Fatal("expected span choices")
+	if !strings.Contains(challenge.Public.InvestigationLink.URL, "batch=batch-17") {
+		t.Fatalf("expected batch-pinned investigation link, got %q", challenge.Public.InvestigationLink.URL)
+	}
+	if len(challenge.Public.TraceChoices) != 1 || challenge.Public.TraceChoices[0].ID != "trace-1" {
+		t.Fatalf("expected trace choice trace-1, got %+v", challenge.Public.TraceChoices)
+	}
+	if len(challenge.Public.TraceSpanChoices["trace-1"]) == 0 {
+		t.Fatal("expected per-trace span choices")
+	}
+	if len(challenge.ExpectedTraceIDs) != 1 || challenge.ExpectedTraceIDs[0] != "trace-1" {
+		t.Fatalf("expected accepted trace trace-1, got %+v", challenge.ExpectedTraceIDs)
 	}
 	if challenge.ExpectedSpanID != spanChoiceID(def.ExpectedService, def.AnswerKey.SpanOperation) {
 		t.Fatalf("unexpected expected span id: %s", challenge.ExpectedSpanID)
 	}
 }
 
-func TestGradeSubmissionRequiresSpanEvidence(t *testing.T) {
+func TestGradeSubmissionRequiresTraceAndSpanEvidence(t *testing.T) {
 	def := firstScenarioByLevel(t, testScenarioSet(), 1)
 	challenge, err := buildPreparedChallenge(def, traceGroups{
 		Faulty: []traceRecord{
 			traceFixture("trace-1", def, nil),
 		},
-	}, func(string) string { return "" })
+	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" })
 	if err != nil {
 		t.Fatalf("buildPreparedChallenge: %v", err)
 	}
 
 	result := gradeSubmission(def, challenge, gradeRequest{
-		SuspectedService: def.ExpectedService,
-		SuspectedIssue:   def.ExpectedIssue,
-		SelectedSpan:     spanChoiceID("edge-api", "GET /api/search"),
+		SelectedTraceID: "trace-1",
+		SelectedSpan:    spanChoiceID("edge-api", "GET /api/search"),
 	})
 	if result.Pass {
 		t.Fatal("expected wrong span to fail")
 	}
 
 	result = gradeSubmission(def, challenge, gradeRequest{
-		SuspectedService: def.ExpectedService,
-		SuspectedIssue:   def.ExpectedIssue,
-		SelectedSpan:     challenge.ExpectedSpanID,
+		SelectedTraceID: "trace-missing",
+		SelectedSpan:    challenge.ExpectedSpanID,
+	})
+	if result.Pass {
+		t.Fatal("expected wrong trace to fail")
+	}
+
+	result = gradeSubmission(def, challenge, gradeRequest{
+		SelectedTraceID: "trace-1",
+		SelectedSpan:    challenge.ExpectedSpanID,
 	})
 	if !result.Pass {
 		t.Fatalf("expected correct span to pass, got %q", result.Message)
@@ -152,7 +184,7 @@ func TestGradeSubmissionRequiresSupportingAttribute(t *testing.T) {
 				def.AnswerKey.AttributeKey: def.AnswerKey.AttributeValue,
 			}),
 		},
-	}, func(string) string { return "" })
+	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" })
 	if err != nil {
 		t.Fatalf("buildPreparedChallenge: %v", err)
 	}
@@ -161,7 +193,7 @@ func TestGradeSubmissionRequiresSupportingAttribute(t *testing.T) {
 		SuspectedService:  def.ExpectedService,
 		SuspectedIssue:    def.ExpectedIssue,
 		SelectedSpan:      challenge.ExpectedSpanID,
-		SelectedAttribute: "lab.failure_mode=wrong.value",
+		SelectedAttribute: "lab.wait_checkpoint=wrong.value",
 	})
 	if result.Pass {
 		t.Fatal("expected wrong attribute to fail")
@@ -246,6 +278,27 @@ func TestEffectiveTraceSearchLimitHonorsHigherConfiguredMax(t *testing.T) {
 
 	if got := s.effectiveTraceSearchLimit(4, 30); got != 30 {
 		t.Fatalf("expected configured max to allow 30, got %d", got)
+	}
+}
+
+func TestSearchURLIncludesBatchTags(t *testing.T) {
+	s := &coachServer{jaegerUIURL: "http://jaeger.example"}
+
+	got := s.searchURL("shop-web", "GET /search", 12, map[string]string{
+		app.BatchAttribute: "batch-42",
+	})
+
+	if !strings.Contains(got, "service=shop-web") {
+		t.Fatalf("expected service in search URL, got %q", got)
+	}
+	if !strings.Contains(got, "operation=GET+%2Fsearch") {
+		t.Fatalf("expected operation in search URL, got %q", got)
+	}
+	if !strings.Contains(got, "limit=12") {
+		t.Fatalf("expected limit in search URL, got %q", got)
+	}
+	if !strings.Contains(got, "%22lab.batch_id%22%3A%22batch-42%22") {
+		t.Fatalf("expected encoded batch tag in search URL, got %q", got)
 	}
 }
 
@@ -336,11 +389,11 @@ func testScenarioSet() []scenario.Definition {
 	}
 
 	templates := []template{
-		{level: 1, assessmentType: assessmentCulpritSpan, route: "/search", op: "GET /search", service: "catalog-api", issue: "expensive_search_query", span: "catalog.search.meilisearch"},
-		{level: 2, assessmentType: assessmentHealthyFaulty, route: "/checkout", op: "GET /checkout", service: "inventory-api", issue: "n_plus_one_queries", span: "stock.reserve.n_plus_one"},
-		{level: 3, assessmentType: assessmentBeforeAfter, route: "/account/orders", op: "GET /account/orders", service: "orders-api", issue: "expensive_sort", span: "orders.history.expensive_sort"},
-		{level: 4, assessmentType: assessmentSpanAttribute, route: "/checkout", op: "GET /checkout", service: "payments-api", issue: "lock_wait_timeout", span: "payments.idempotency.lock_wait", attrKey: "lab.failure_mode", attrValue: "lock_wait_timeout"},
-		{level: 5, assessmentType: assessmentIntermittent, route: "/search", op: "GET /search", service: "catalog-api", issue: "expensive_search_query", span: "catalog.search.meilisearch"},
+		{level: 1, assessmentType: assessmentTraceSearchSpan, route: "/search", op: "GET /search", service: "catalog-api", issue: "expensive_search_query", span: "catalog.search.fetch_results"},
+		{level: 2, assessmentType: assessmentHealthyFaulty, route: "/checkout", op: "GET /checkout", service: "inventory-api", issue: "n_plus_one_queries", span: "inventory.reserve.check_stock"},
+		{level: 3, assessmentType: assessmentBeforeAfter, route: "/account/orders", op: "GET /account/orders", service: "orders-api", issue: "expensive_sort", span: "orders.history.load_page"},
+		{level: 4, assessmentType: assessmentSpanAttribute, route: "/checkout", op: "GET /checkout", service: "payments-api", issue: "lock_wait_timeout", span: "payments.idempotency.ensure_guard", attrKey: "lab.wait_checkpoint", attrValue: "payments.idempotency.guard"},
+		{level: 5, assessmentType: assessmentIntermittent, route: "/search", op: "GET /search", service: "catalog-api", issue: "expensive_search_query", span: "catalog.search.fetch_results"},
 	}
 
 	defs := make([]scenario.Definition, 0, len(templates)*3)
@@ -377,7 +430,7 @@ func testScenarioSet() []scenario.Definition {
 
 func testBatchPlan(assessmentType string) scenario.BatchPlan {
 	switch assessmentType {
-	case assessmentCulpritSpan:
+	case assessmentTraceSearchSpan, assessmentCulpritSpan:
 		return scenario.BatchPlan{FaultyCount: 2, BackgroundCount: 1}
 	case assessmentHealthyFaulty:
 		return scenario.BatchPlan{FaultyCount: 2, HealthyCount: 1, BackgroundCount: 1}

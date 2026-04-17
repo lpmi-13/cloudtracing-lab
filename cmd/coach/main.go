@@ -63,6 +63,7 @@ type gradeRequest struct {
 	ScenarioID        string   `json:"scenario_id"`
 	SuspectedService  string   `json:"suspected_service"`
 	SuspectedIssue    string   `json:"suspected_issue"`
+	SelectedTraceID   string   `json:"selected_trace_id"`
 	SelectedSpan      string   `json:"selected_span"`
 	SelectedAttribute string   `json:"selected_attribute"`
 	FaultyTraceIDs    []string `json:"faulty_trace_ids"`
@@ -151,8 +152,8 @@ func (s *coachServer) index(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("prepare selected challenge for %s (%s): %v", s.levelLabel(selectedLevel), def.ID, err)
 		s.setFeedbackLocked("The current challenge is loaded, but automatic trace generation failed. Refresh or request a new challenge and try again.", false)
-	} else if generated > 0 {
-		s.setFeedbackLocked(fmt.Sprintf("Prepared %s for %s. %s", freshTraceText(generated), s.levelLabel(selectedLevel), focusTraceFeedback(def)), false)
+	} else {
+		s.clearFeedbackLocked()
 	}
 	snapshot, subscribers := s.snapshotAndSubscribersLocked()
 	s.mu.Unlock()
@@ -228,16 +229,14 @@ func (s *coachServer) nextChallenge(w http.ResponseWriter, r *http.Request) {
 	state.Challenge = nil
 	s.mu.Unlock()
 
-	generated, err := s.prepareLevelScenario(r.Context(), level, defaultTraceBatchSize)
+	_, err := s.prepareLevelScenario(r.Context(), level, defaultTraceBatchSize)
 
 	s.mu.Lock()
 	if err != nil {
 		log.Printf("prepare new challenge for %s (%s): %v", s.levelLabel(level), next.ID, err)
 		s.setFeedbackLocked(fmt.Sprintf("A fresh challenge was selected for %s, but automatic trace generation failed. Refresh or try again.", s.levelLabel(level)), false)
-	} else if generated > 0 {
-		s.setFeedbackLocked(fmt.Sprintf("Prepared %s for a new challenge in %s. %s", freshTraceText(generated), s.levelLabel(level), focusTraceFeedback(next)), false)
 	} else {
-		s.setFeedbackLocked(fmt.Sprintf("Loaded the current challenge for %s. %s", s.levelLabel(level), focusTraceFeedback(next)), false)
+		s.clearFeedbackLocked()
 	}
 	snapshot, subscribers := s.snapshotAndSubscribersLocked()
 	s.mu.Unlock()
@@ -280,26 +279,23 @@ func (s *coachServer) selectLevel(w http.ResponseWriter, r *http.Request) {
 	prepared := s.levelStateLocked(req.Level).Prepared
 	s.mu.Unlock()
 
-	generated := 0
 	var err error
 	if !prepared {
-		generated, err = s.prepareLevelScenario(r.Context(), req.Level, defaultTraceBatchSize)
+		_, err = s.prepareLevelScenario(r.Context(), req.Level, defaultTraceBatchSize)
 	}
 
 	s.mu.Lock()
-	message := fmt.Sprintf("%s selected.", s.levelLabel(req.Level))
-	if unlockedLevel > 0 {
-		message += fmt.Sprintf(" %s is now unlocked.", s.levelLabel(unlockedLevel))
-	}
 	if err != nil {
 		log.Printf("prepare selected level challenge for %s (%s): %v", s.levelLabel(req.Level), selected.ID, err)
+		message := fmt.Sprintf("%s selected.", s.levelLabel(req.Level))
+		if unlockedLevel > 0 {
+			message += fmt.Sprintf(" %s is now unlocked.", s.levelLabel(unlockedLevel))
+		}
 		message += " The challenge loaded, but automatic trace generation failed. Refresh or request a new challenge and try again."
-	} else if generated > 0 {
-		message += fmt.Sprintf(" Prepared %s. %s", freshTraceText(generated), focusTraceFeedback(selected))
+		s.setFeedbackLocked(message, false)
 	} else {
-		message += " " + focusTraceFeedback(selected)
+		s.clearFeedbackLocked()
 	}
-	s.setFeedbackLocked(message, false)
 	snapshot, subscribers := s.snapshotAndSubscribersLocked()
 	s.mu.Unlock()
 	s.actionMu.Unlock()
@@ -378,7 +374,7 @@ func (s *coachServer) grade(w http.ResponseWriter, r *http.Request) {
 	state.Challenge = nil
 	s.mu.Unlock()
 
-	generated, err := s.prepareLevelScenario(r.Context(), level, defaultTraceBatchSize)
+	_, err := s.prepareLevelScenario(r.Context(), level, defaultTraceBatchSize)
 
 	s.mu.Lock()
 	message := fmt.Sprintf("Correct. %s is now at %d/%d mastery.", s.levelLabel(level), masteryCount, masteryTarget)
@@ -387,8 +383,6 @@ func (s *coachServer) grade(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		message += "\n\nA fresh challenge was selected, but automatic trace generation failed. Refresh or request a new challenge and try again."
-	} else {
-		message += fmt.Sprintf("\n\nPrepared %s for the next challenge in this level. %s", freshTraceText(generated), focusTraceFeedback(next))
 	}
 	s.setFeedbackLocked(message, true)
 	snapshot, subscribers := s.snapshotAndSubscribersLocked()
@@ -549,17 +543,6 @@ func defaultEnvInt(key string, fallback int) int {
 	return parsed
 }
 
-func freshTraceText(count int) string {
-	if count == 1 {
-		return "1 fresh trace"
-	}
-	return fmt.Sprintf("%d fresh traces", count)
-}
-
-func focusTraceFeedback(def scenario.Definition) string {
-	return startGuideFor(def)
-}
-
 func serveFavicon(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/vnd.microsoft.icon")
 	http.ServeContent(w, r, "favicon.ico", time.Time{}, bytes.NewReader(coachFavicon))
@@ -611,13 +594,13 @@ const pageTemplate = `
       }
       .stack {
         display: grid;
-        gap: 18px;
+        gap: 16px;
       }
       .panel {
         background: var(--panel);
         border: 1px solid var(--border);
         border-radius: 20px;
-        padding: 20px;
+        padding: 18px;
         box-shadow: 0 12px 28px rgba(0, 0, 0, 0.06);
       }
       .grid {
@@ -625,10 +608,36 @@ const pageTemplate = `
         grid-template-columns: 1.45fr 1fr;
         gap: 18px;
       }
+      .progression-panel {
+        padding: 14px 16px;
+      }
+      .progression-topline {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: flex-start;
+      }
+      .progression-copy {
+        display: grid;
+        gap: 4px;
+      }
+      .progression-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        justify-content: flex-end;
+      }
+      .progression-body {
+        margin-top: 12px;
+      }
+      .progression-body.collapsed {
+        display: none;
+      }
       .level-grid {
         display: grid;
         grid-template-columns: repeat(5, minmax(0, 1fr));
-        gap: 12px;
+        gap: 8px;
       }
       @media (max-width: 1080px) {
         .level-grid {
@@ -638,20 +647,25 @@ const pageTemplate = `
       @media (max-width: 840px) {
         .grid { grid-template-columns: 1fr; }
         .level-grid { grid-template-columns: 1fr; }
+        .progression-topline {
+          align-items: stretch;
+          flex-direction: column;
+        }
+        .progression-actions {
+          justify-content: flex-start;
+        }
+        .level-summary {
+          display: none;
+        }
+        main {
+          padding: 18px 16px 36px;
+        }
       }
       h1, h2, h3, h4 { margin-top: 0; }
       p { line-height: 1.45; }
       .muted { color: var(--muted); }
-      .badge {
-        display: inline-block;
-        padding: 6px 10px;
-        border-radius: 999px;
-        background: var(--accent-soft);
-        margin-right: 8px;
-        margin-bottom: 8px;
-      }
       .eyebrow {
-        font-size: 0.84rem;
+        font-size: 0.76rem;
         letter-spacing: 0.08em;
         text-transform: uppercase;
         color: var(--muted);
@@ -664,9 +678,14 @@ const pageTemplate = `
         color: white;
         border: none;
         border-radius: 999px;
-        padding: 10px 14px;
+        padding: 9px 14px;
         cursor: pointer;
         text-decoration: none;
+      }
+      .ghost-button {
+        background: transparent;
+        color: var(--ink);
+        border: 1px solid var(--border);
       }
       button:disabled, .level-button:disabled {
         opacity: 0.68;
@@ -683,13 +702,13 @@ const pageTemplate = `
       .level-button {
         width: 100%;
         text-align: left;
-        border-radius: 18px;
+        border-radius: 16px;
         border: 1px solid var(--border);
         background: white;
         color: var(--ink);
-        padding: 14px;
+        padding: 12px;
         display: grid;
-        gap: 10px;
+        gap: 6px;
       }
       .level-button.selected {
         background: var(--accent);
@@ -709,12 +728,17 @@ const pageTemplate = `
         gap: 10px;
         align-items: center;
       }
+      .level-state {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
       .level-summary {
-        font-size: 0.96rem;
+        font-size: 0.88rem;
         line-height: 1.35;
       }
       .level-progress {
-        font-size: 0.92rem;
+        font-size: 0.82rem;
         font-weight: 600;
       }
       .actions {
@@ -722,19 +746,24 @@ const pageTemplate = `
         flex-wrap: wrap;
         gap: 10px;
       }
-      .status-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        align-items: center;
-      }
       .status-pill {
         padding: 6px 10px;
         border-radius: 999px;
         background: #f3ede3;
+        font-size: 0.9rem;
+      }
+      .challenge-header {
+        display: grid;
+        gap: 10px;
+      }
+      .challenge-copy {
+        display: grid;
+        gap: 8px;
+      }
+      .hidden {
+        display: none;
       }
       #feedback {
-        min-height: 72px;
         padding: 12px 14px;
         border-radius: 14px;
         background: #f3ede3;
@@ -765,7 +794,6 @@ const pageTemplate = `
         min-height: 0;
       }
       #hint-box {
-        min-height: 72px;
         padding: 12px 14px;
         border-radius: 14px;
         background: #f3ede3;
@@ -775,15 +803,6 @@ const pageTemplate = `
         background: #f3ead8;
         padding: 2px 6px;
         border-radius: 8px;
-      }
-      .assessment-card {
-        padding: 14px;
-        border-radius: 14px;
-        background: #f3ede3;
-      }
-      .evidence-list {
-        margin: 10px 0 0;
-        padding-left: 20px;
       }
       .field-label {
         display: block;
@@ -808,6 +827,8 @@ const pageTemplate = `
         margin-top: 4px;
       }
       .reference-trace {
+        display: grid;
+        gap: 6px;
         padding: 10px 12px;
         border-radius: 12px;
         background: #f3ede3;
@@ -846,85 +867,75 @@ const pageTemplate = `
   </head>
   <body>
     <main class="stack">
-      <section class="panel stack">
-        <div class="eyebrow">Shared Progression</div>
-        <div class="status-row">
-          <strong id="selected-level-title"></strong>
-          <span id="selected-level-progress" class="status-pill"></span>
-          <span class="status-pill">Mastery gate: 5 correct attempts</span>
-          <span class="status-pill">Unlocked levels stay selectable</span>
+      <section class="panel progression-panel">
+        <div class="progression-topline">
+          <div class="progression-copy">
+            <div class="eyebrow">Progression</div>
+            <strong id="selected-level-title"></strong>
+          </div>
+          <div class="progression-actions">
+            <span id="selected-level-progress" class="status-pill"></span>
+            <button id="toggle-levels" class="ghost-button" type="button" aria-controls="levels-wrap" aria-expanded="true">Hide Levels</button>
+          </div>
         </div>
-        <p class="muted">Every open coach tab shares the same selected level, current challenge, and mastery counts. Unlocking stays sequential: master the selected level to open the next one.</p>
-        <div id="levels" class="level-grid"></div>
+        <div id="levels-wrap" class="progression-body">
+          <div id="levels" class="level-grid"></div>
+        </div>
       </section>
 
       <section class="grid">
         <article class="panel stack">
-          <div>
-            <div class="badge">Localhost Ports / Ingress</div>
-            <div class="badge">Python Web Tier</div>
-            <div class="badge">Go + Python App Tier</div>
-            <div class="badge">PostgreSQL + Redis + Meilisearch</div>
-          </div>
-          <div>
-            <div class="eyebrow">Current Challenge</div>
+          <div class="challenge-header">
             <h2 id="title"></h2>
-            <p id="objective"></p>
-            <p id="prompt" class="muted"></p>
-            <p class="muted">Selecting an unlocked level loads that level's current challenge. Requesting a new challenge keeps you in the same level and seeds fresh traces across the shop endpoints.</p>
+            <p id="objective" class="muted"></p>
+            <div id="reference-trace" class="reference-trace muted"></div>
           </div>
           <div class="actions">
             {{if .JaegerURL}}<a class="button" target="_blank" rel="noreferrer" href="{{.JaegerURL}}">Open Jaeger</a>{{end}}
             <button id="next-challenge" type="button">New Challenge</button>
           </div>
-          <div>
-            <strong>Assessment Contract</strong>
+          <div class="challenge-copy">
             <p id="assessment-prompt" class="muted"></p>
-            <p id="start-guide" class="muted"></p>
-            <div id="reference-trace" class="reference-trace muted"></div>
-            <div class="assessment-card">
-              <div class="eyebrow">Required Evidence</div>
-              <ul id="required-evidence" class="evidence-list"></ul>
-              <p id="pass-condition" class="muted"></p>
-            </div>
           </div>
-          <div>
-            <strong>Need a hint?</strong>
-            <p class="muted">Use hints only if you are stuck moving from the entry span to the next service layer.</p>
-            <div id="hint-shell" class="hint-shell" aria-hidden="true">
-              <div id="hint-box" class="muted"></div>
-            </div>
+          <div id="hint-panel" class="stack">
             <div class="actions">
               <button id="hint" type="button">Show Hint</button>
+            </div>
+            <div id="hint-shell" class="hint-shell" aria-hidden="true">
+              <div id="hint-box" class="muted"></div>
             </div>
           </div>
         </article>
 
         <aside class="panel stack">
           <div>
-            <h3>Submit Diagnosis</h3>
-            <label class="field-label" for="service">Culprit service</label>
-            <select id="service">
-              <option value="">Select service</option>
-              <option value="catalog-api">catalog-api</option>
-              <option value="inventory-api">inventory-api</option>
-              <option value="orders-api">orders-api</option>
-              <option value="payments-api">payments-api</option>
-            </select>
-            <label class="field-label" for="issue">Failure mode</label>
-            <select id="issue">
-              <option value="">Select issue type</option>
-              <option value="expensive_search_query">expensive search query</option>
-              <option value="n_plus_one_queries">n plus one queries</option>
-              <option value="lock_wait_timeout">lock wait timeout</option>
-              <option value="expensive_sort">expensive sort</option>
-            </select>
+            <h3>Submit Answer</h3>
+            <div id="service-field">
+              <label class="field-label" for="service">Culprit service</label>
+              <select id="service">
+                <option value="">Select service</option>
+                <option value="catalog-api">catalog-api</option>
+                <option value="inventory-api">inventory-api</option>
+                <option value="orders-api">orders-api</option>
+                <option value="payments-api">payments-api</option>
+              </select>
+            </div>
+            <div id="issue-field">
+              <label class="field-label" for="issue">Failure mode</label>
+              <select id="issue">
+                <option value="">Select issue type</option>
+                <option value="expensive_search_query">expensive search query</option>
+                <option value="n_plus_one_queries">n plus one queries</option>
+                <option value="lock_wait_timeout">lock wait timeout</option>
+                <option value="expensive_sort">expensive sort</option>
+              </select>
+            </div>
             <div id="assessment-fields" class="stack"></div>
             <div class="actions">
               <button id="submit" type="button">Check Answer</button>
             </div>
           </div>
-          <div>
+          <div id="feedback-panel" class="hidden">
             <h4>Coach Feedback</h4>
             <div id="feedback"></div>
           </div>
@@ -941,12 +952,14 @@ const pageTemplate = `
 
     <script>
       const initialState = {{.InitialState}};
-      const learnerLoopHint = "1. Read the scenario.\n2. Open Jaeger.\n3. Use the assessment contract to decide what evidence you need.";
       const minimumSubmitBusyMs = 700;
+      const mobileProgressionQuery = window.matchMedia("(max-width: 840px)");
       let coachState = initialState;
       let hintLevel = 0;
       let lastScenarioID = "";
       let lastSelectedLevel = 0;
+      let levelsCollapsed = mobileProgressionQuery.matches;
+      let levelsCollapseTouched = false;
 
       function currentScenario() {
         return coachState.current_scenario || {};
@@ -956,14 +969,39 @@ const pageTemplate = `
         return currentScenario().assessment || {};
       }
 
+      function requiresDiagnosis(assessment) {
+        return assessment.type !== "trace_search_span";
+      }
+
       function selectedLevel() {
         return (coachState.levels || []).find((level) => level.selected) || null;
       }
 
-      function setFeedback(message, ok = false) {
+      function setFeedback(message, ok = false, visible = false) {
+        const panel = document.getElementById("feedback-panel");
         const box = document.getElementById("feedback");
         box.textContent = message || "";
-        box.className = ok ? "ok" : "";
+        box.classList.toggle("ok", ok);
+        panel.classList.toggle("hidden", !visible);
+      }
+
+      function setLevelsCollapsed(collapsed) {
+        levelsCollapsed = collapsed;
+        document.getElementById("levels-wrap").classList.toggle("collapsed", collapsed);
+        document.getElementById("toggle-levels").setAttribute("aria-expanded", String(!collapsed));
+        document.getElementById("toggle-levels").textContent = collapsed ? "Show Levels" : "Hide Levels";
+      }
+
+      function syncLevelsCollapsed() {
+        if (levelsCollapseTouched) {
+          return;
+        }
+        setLevelsCollapsed(mobileProgressionQuery.matches);
+      }
+
+      function toggleLevels() {
+        levelsCollapseTouched = true;
+        setLevelsCollapsed(!levelsCollapsed);
       }
 
       function delay(ms) {
@@ -972,16 +1010,25 @@ const pageTemplate = `
 
       function hintsForCurrent() {
         const current = currentScenario();
-        return [learnerLoopHint, current.hint_1, current.hint_2].filter(Boolean);
+        const assessment = currentAssessment();
+        return [assessment.start_guide, current.prompt, current.hint_1, current.hint_2].filter(Boolean);
+      }
+
+      function renderAssessmentFieldVisibility(assessment) {
+        const hidden = !requiresDiagnosis(assessment);
+        document.getElementById("service-field").classList.toggle("hidden", hidden);
+        document.getElementById("issue-field").classList.toggle("hidden", hidden);
       }
 
       function renderHints() {
         const hints = hintsForCurrent();
+        const panel = document.getElementById("hint-panel");
         const shell = document.getElementById("hint-shell");
         const box = document.getElementById("hint-box");
         const button = document.getElementById("hint");
         const isOpen = hints.length > 0 && hintLevel > 0;
 
+        panel.classList.toggle("hidden", hints.length === 0);
         shell.classList.toggle("open", isOpen);
         shell.setAttribute("aria-hidden", String(!isOpen));
 
@@ -1061,10 +1108,10 @@ const pageTemplate = `
           button.innerHTML =
             "<div class=\"level-topline\">" +
               "<strong>" + level.title + "</strong>" +
-              "<span>" + (level.unlocked ? "Unlocked" : "Locked") + "</span>" +
+              "<span class=\"level-state\">" + (level.unlocked ? (level.mastered ? "Mastered" : "Open") : "Locked") + "</span>" +
             "</div>" +
             "<div class=\"level-summary\">" + level.summary + "</div>" +
-            "<div class=\"level-progress\">" + level.mastery_count + "/" + level.mastery_target + " correct" + (level.mastered ? " • Mastered" : "") + "</div>";
+            "<div class=\"level-progress\">" + level.mastery_count + "/" + level.mastery_target + " correct</div>";
           if (level.unlocked) {
             button.addEventListener("click", () => selectLevel(level.number));
           }
@@ -1076,9 +1123,27 @@ const pageTemplate = `
         const shell = document.getElementById("reference-trace");
         shell.innerHTML = "";
 
+        if (assessment.investigation_link) {
+          const intro = document.createElement("span");
+          intro.textContent = "Open the prepared trace search:";
+          shell.appendChild(intro);
+
+          if (assessment.investigation_link.url) {
+            const link = document.createElement("a");
+            link.href = assessment.investigation_link.url;
+            link.target = "_blank";
+            link.rel = "noreferrer";
+            link.textContent = assessment.investigation_link.label;
+            shell.appendChild(link);
+          } else {
+            shell.appendChild(document.createTextNode(assessment.investigation_link.label));
+          }
+          return;
+        }
+
         if (assessment.reference_trace) {
           const intro = document.createElement("span");
-          intro.textContent = "Reference trace: ";
+          intro.textContent = "Open the reference trace:";
           shell.appendChild(intro);
 
           if (assessment.reference_trace.url) {
@@ -1099,17 +1164,26 @@ const pageTemplate = `
           return;
         }
 
-        shell.textContent = "The candidate traces for this challenge are ready below. Open Jaeger to inspect them.";
+        switch (assessment.type) {
+          case "healthy_faulty":
+            shell.textContent = "Open the trace links below, pick the slow ones, and choose the one healthy trace.";
+            break;
+          case "before_after":
+            shell.textContent = "Pick one before trace and one slow after trace from the lists below.";
+            break;
+          case "intermittent_failure":
+            shell.textContent = "Open the trace links below and select the failing ones.";
+            break;
+          default:
+            shell.textContent = "Open Jaeger to inspect the prepared traces below.";
+        }
       }
 
-      function renderEvidenceList(assessment) {
-        const list = document.getElementById("required-evidence");
-        list.innerHTML = "";
-        (assessment.required_evidence || []).forEach((item) => {
-          const li = document.createElement("li");
-          li.textContent = item;
-          list.appendChild(li);
-        });
+      function appendNote(container, text) {
+        const note = document.createElement("p");
+        note.className = "muted";
+        note.textContent = text;
+        container.appendChild(note);
       }
 
       function appendSelect(container, id, labelText, options, placeholder) {
@@ -1176,12 +1250,76 @@ const pageTemplate = `
         container.appendChild(group);
       }
 
+      function selectedServiceValue() {
+        return document.getElementById("service")?.value || "";
+      }
+
+      function selectedTraceValue() {
+        return document.getElementById("selected-trace")?.value || "";
+      }
+
+      function selectedSpanValue() {
+        return document.getElementById("selected-span")?.value || "";
+      }
+
+      function traceSpanChoicesForAssessment(assessment) {
+        const traceID = selectedTraceValue();
+        if (!traceID) {
+          return [];
+        }
+        return (assessment.trace_span_choices || {})[traceID] || [];
+      }
+
+      function spanChoicesForAssessment(assessment) {
+        const service = selectedServiceValue();
+        if (!service) {
+          return [];
+        }
+        return (assessment.span_choices || []).filter((option) => option.service === service);
+      }
+
+      function attributeChoicesForAssessment(assessment) {
+        const spanID = selectedSpanValue();
+        if (!spanID) {
+          return [];
+        }
+        return (assessment.span_attribute_choices || {})[spanID] || [];
+      }
+
+      function restoreSelectValue(id, value) {
+        const select = document.getElementById(id);
+        if (!select || !value) {
+          return;
+        }
+        if ([...select.options].some((option) => option.value === value)) {
+          select.value = value;
+        }
+      }
+
+      function restoreCheckedValues(name, values) {
+        const wanted = new Set(values || []);
+        document.querySelectorAll("input[name=\"" + name + "\"]").forEach((input) => {
+          input.checked = wanted.has(input.value);
+        });
+      }
+
       function renderAssessmentFields(force) {
         const shell = document.getElementById("assessment-fields");
         const assessment = currentAssessment();
+        const previousState = {
+          selectedTraceID: selectedTraceValue(),
+          selectedSpanID: selectedSpanValue(),
+          selectedAttributeID: document.getElementById("selected-attribute")?.value || "",
+          beforeTraceID: document.getElementById("before-trace")?.value || "",
+          afterTraceID: document.getElementById("after-trace")?.value || "",
+          faultyTraceIDs: checkedValues("faulty-trace"),
+          healthyTraceID: checkedValue("healthy-trace"),
+          failingTraceIDs: checkedValues("failing-trace")
+        };
         const signature = [
           assessment.type || "",
           String(assessment.ready),
+          assessment.investigation_link ? assessment.investigation_link.label : "",
           assessment.reference_trace ? assessment.reference_trace.id : "",
           (assessment.trace_choices || []).length,
           (assessment.span_choices || []).length,
@@ -1203,23 +1341,53 @@ const pageTemplate = `
         }
 
         switch (assessment.type) {
+          case "trace_search_span":
+            appendSelect(shell, "selected-trace", "Trace used", assessment.trace_choices, "Select the trace");
+            restoreSelectValue("selected-trace", previousState.selectedTraceID);
+            if (!selectedTraceValue()) {
+              appendNote(shell, "Select the trace you inspected to load its span choices.");
+              break;
+            }
+            appendSelect(shell, "selected-span", "Culprit span", traceSpanChoicesForAssessment(assessment), "Select the span");
+            restoreSelectValue("selected-span", previousState.selectedSpanID);
+            break;
           case "culprit_span":
-            appendSelect(shell, "selected-span", "Culprit span", assessment.span_choices, "Select the span");
+            if (!selectedServiceValue()) {
+              appendNote(shell, "Select the culprit service to load its span choices.");
+              break;
+            }
+            appendSelect(shell, "selected-span", "Culprit span", spanChoicesForAssessment(assessment), "Select the span");
+            restoreSelectValue("selected-span", previousState.selectedSpanID);
             break;
           case "healthy_faulty":
-            appendChoiceGroup(shell, "faulty-trace", "checkbox", "Regressed traces", assessment.trace_choices);
-            appendChoiceGroup(shell, "healthy-trace", "radio", "Healthy comparison trace", assessment.trace_choices);
+            appendChoiceGroup(shell, "faulty-trace", "checkbox", "Slow traces", assessment.trace_choices);
+            appendChoiceGroup(shell, "healthy-trace", "radio", "Healthy trace", assessment.trace_choices);
+            restoreCheckedValues("faulty-trace", previousState.faultyTraceIDs);
+            restoreCheckedValues("healthy-trace", previousState.healthyTraceID ? [previousState.healthyTraceID] : []);
             break;
           case "before_after":
             appendSelect(shell, "before-trace", "Before trace", assessment.before_trace_choices, "Select a baseline trace");
-            appendSelect(shell, "after-trace", "After trace", assessment.after_trace_choices, "Select a regressed trace");
+            appendSelect(shell, "after-trace", "After trace", assessment.after_trace_choices, "Select a slow trace");
+            restoreSelectValue("before-trace", previousState.beforeTraceID);
+            restoreSelectValue("after-trace", previousState.afterTraceID);
             break;
           case "span_attribute":
-            appendSelect(shell, "selected-span", "Culprit span", assessment.span_choices, "Select the span");
-            appendSelect(shell, "selected-attribute", "Supporting attribute", assessment.attribute_choices, "Select the attribute");
+            if (!selectedServiceValue()) {
+              appendNote(shell, "Select the culprit service to load its span choices.");
+              break;
+            }
+            appendSelect(shell, "selected-span", "Culprit span", spanChoicesForAssessment(assessment), "Select the span");
+            restoreSelectValue("selected-span", previousState.selectedSpanID);
+            if (!selectedSpanValue()) {
+              appendNote(shell, "Select the culprit span to load its supporting attributes.");
+              break;
+            }
+            appendSelect(shell, "selected-attribute", "Supporting attribute", attributeChoicesForAssessment(assessment), "Select the attribute");
+            restoreSelectValue("selected-attribute", previousState.selectedAttributeID);
             break;
           case "intermittent_failure":
             appendChoiceGroup(shell, "failing-trace", "checkbox", "Failing traces", assessment.trace_choices);
+            restoreCheckedValues("failing-trace", previousState.failingTraceIDs);
             break;
         }
       }
@@ -1235,6 +1403,7 @@ const pageTemplate = `
 
       function assessmentPayload(assessment) {
         const payload = {
+          selected_trace_id: "",
           selected_span: "",
           selected_attribute: "",
           faulty_trace_ids: [],
@@ -1245,6 +1414,10 @@ const pageTemplate = `
         };
 
         switch (assessment.type) {
+          case "trace_search_span":
+            payload.selected_trace_id = document.getElementById("selected-trace")?.value || "";
+            payload.selected_span = document.getElementById("selected-span")?.value || "";
+            break;
           case "culprit_span":
             payload.selected_span = document.getElementById("selected-span")?.value || "";
             break;
@@ -1273,13 +1446,18 @@ const pageTemplate = `
         }
 
         switch (assessment.type) {
+          case "trace_search_span":
+            if (!payload.selected_trace_id) {
+              return "Select the trace you inspected before submitting.";
+            }
+            return payload.selected_span ? "" : "Select the culprit span before submitting.";
           case "culprit_span":
             return payload.selected_span ? "" : "Select the culprit span before submitting.";
           case "healthy_faulty":
             if (payload.faulty_trace_ids.length === 0) {
-              return "Select every regressed trace before submitting.";
+              return "Select every slow trace before submitting.";
             }
-            return payload.healthy_trace_id ? "" : "Select the healthy comparison trace before submitting.";
+            return payload.healthy_trace_id ? "" : "Select the healthy trace before submitting.";
           case "before_after":
             if (!payload.before_trace_id) {
               return "Select a before trace before submitting.";
@@ -1305,11 +1483,8 @@ const pageTemplate = `
 
         document.getElementById("title").textContent = current.title || "";
         document.getElementById("objective").textContent = current.objective || "";
-        document.getElementById("prompt").textContent = current.prompt || "";
         document.getElementById("assessment-prompt").textContent = assessment.prompt || "";
-        document.getElementById("start-guide").textContent = assessment.start_guide || "";
-        document.getElementById("pass-condition").textContent = assessment.pass_condition || "";
-        document.getElementById("selected-level-title").textContent = selected ? (selected.title + ": " + selected.summary) : "Level";
+        document.getElementById("selected-level-title").textContent = selected ? (selected.title + " • " + selected.summary) : "Level";
         document.getElementById("selected-level-progress").textContent = selected ? (selected.mastery_count + "/" + selected.mastery_target + " correct") : "";
 
         if (scenarioChanged) {
@@ -1318,12 +1493,12 @@ const pageTemplate = `
           hintLevel = 0;
         }
 
+        renderAssessmentFieldVisibility(assessment);
         renderReferenceTrace(assessment);
-        renderEvidenceList(assessment);
         renderAssessmentFields(scenarioChanged || document.getElementById("assessment-fields").childElementCount === 0);
         renderLevels();
         renderHints();
-        setFeedback(coachState.feedback, coachState.feedback_ok);
+        setFeedback(coachState.feedback, coachState.feedback_ok, coachState.has_feedback);
 
         lastScenarioID = current.id || "";
         lastSelectedLevel = coachState.selected_level || 0;
@@ -1368,7 +1543,7 @@ const pageTemplate = `
             body: JSON.stringify({level})
           });
         } catch (error) {
-          setFeedback("Selecting the level failed. Refresh the page and try again.");
+          setFeedback("Selecting the level failed. Refresh the page and try again.", false, true);
         } finally {
           clearBusy();
         }
@@ -1379,7 +1554,7 @@ const pageTemplate = `
         try {
           await requestSnapshot("/api/challenges/next", {method: "POST"});
         } catch (error) {
-          setFeedback("Preparing a new challenge failed. Refresh the page and try again.");
+          setFeedback("Preparing a new challenge failed. Refresh the page and try again.", false, true);
         } finally {
           clearBusy();
         }
@@ -1391,15 +1566,15 @@ const pageTemplate = `
         const current = currentScenario();
         const assessment = currentAssessment();
 
-        if (!suspectedService || !suspectedIssue) {
-          setFeedback("Select both a culprit service and a failure mode before submitting.");
+        if (requiresDiagnosis(assessment) && (!suspectedService || !suspectedIssue)) {
+          setFeedback("Select both a culprit service and a failure mode before submitting.", false, true);
           return;
         }
 
         const payload = assessmentPayload(assessment);
         const validationMessage = validateAssessment(assessment, payload);
         if (validationMessage) {
-          setFeedback(validationMessage);
+          setFeedback(validationMessage, false, true);
           return;
         }
 
@@ -1413,6 +1588,7 @@ const pageTemplate = `
               scenario_id: current.id,
               suspected_service: suspectedService,
               suspected_issue: suspectedIssue,
+              selected_trace_id: payload.selected_trace_id,
               selected_span: payload.selected_span,
               selected_attribute: payload.selected_attribute,
               faulty_trace_ids: payload.faulty_trace_ids,
@@ -1423,7 +1599,7 @@ const pageTemplate = `
             })
           });
         } catch (error) {
-          setFeedback("Submitting the diagnosis failed. Refresh the page and try again.");
+          setFeedback("Submitting the diagnosis failed. Refresh the page and try again.", false, true);
         } finally {
           await minimumBusy;
           clearBusy();
@@ -1443,7 +1619,25 @@ const pageTemplate = `
       document.getElementById("next-challenge").addEventListener("click", nextChallenge);
       document.getElementById("hint").addEventListener("click", showHint);
       document.getElementById("submit").addEventListener("click", submit);
+      document.getElementById("service").addEventListener("change", () => {
+        const type = currentAssessment().type;
+        if (type === "culprit_span" || type === "span_attribute") {
+          renderAssessmentFields(true);
+        }
+      });
+      document.getElementById("assessment-fields").addEventListener("change", (event) => {
+        const type = currentAssessment().type;
+        if (event.target.id === "selected-trace" && type === "trace_search_span") {
+          renderAssessmentFields(true);
+        }
+        if (event.target.id === "selected-span" && type === "span_attribute") {
+          renderAssessmentFields(true);
+        }
+      });
+      document.getElementById("toggle-levels").addEventListener("click", toggleLevels);
+      mobileProgressionQuery.addEventListener("change", syncLevelsCollapsed);
 
+      syncLevelsCollapsed();
       render();
       connectEvents();
     </script>

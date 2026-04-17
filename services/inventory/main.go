@@ -102,7 +102,7 @@ func (s *inventoryServer) reserve(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		stmt := "select coalesce(sum(quantity - reserved), 0) from stock_levels where sku = $1"
-		err := app.QuerySpan(ctx, tracer, "stock.reserve.aggregate", stmt, 0, func(ctx context.Context) error {
+		err := app.QuerySpan(ctx, tracer, "inventory.reserve.check_stock", stmt, 0, func(ctx context.Context) error {
 			return s.db.QueryRowContext(ctx, stmt, sku).Scan(&totalAvailable)
 		})
 		if err != nil {

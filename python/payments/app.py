@@ -39,16 +39,16 @@ def charge():
                     if fault.get("mode") == "lock_wait_timeout":
                         with client_span(
                             tracer,
-                            fault.get("query_label", "payments.idempotency.lock_wait"),
+                            fault.get("query_label", "payments.idempotency.ensure_guard"),
                             {
                                 "db.system": "postgresql",
                                 "db.statement": fault.get("query_text", "select pg_sleep(1.2)"),
-                                "lab.query_label": fault.get("query_label", "payments.idempotency.lock_wait"),
+                                "lab.query_label": fault.get("query_label", "payments.idempotency.ensure_guard"),
                                 "lab.statement_signature": "select pg_sleep(%s)",
                             },
                         ) as span:
                             cursor.execute("select pg_sleep(%s)", (fault.get("latency_ms", 1200) / 1000.0,))
-                            span.set_attribute("lab.failure_mode", "lock_wait_timeout")
+                            span.set_attribute("lab.wait_checkpoint", "payments.idempotency.guard")
                         return jsonify(
                             {
                                 "status": "failed",

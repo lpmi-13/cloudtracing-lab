@@ -134,7 +134,7 @@ func (s *catalogServer) search(w http.ResponseWriter, r *http.Request) {
 	}
 
 	body, statement, latency := s.searchBody(q, fault)
-	products, err := s.searchMeili(ctx, "catalog.search.meilisearch", statement, body, latency)
+	products, err := s.searchMeili(ctx, "catalog.search.fetch_results", statement, body, latency)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("search meilisearch: %v", err), http.StatusInternalServerError)
 		return

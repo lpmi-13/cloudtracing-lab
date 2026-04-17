@@ -3,10 +3,10 @@
     "id": "l1-search-span",
     "level": 1,
     "variant_group": "catalog_search",
-    "assessment_type": "culprit_span",
-    "assessment_prompt": "Submit the culprit service, the failure mode, and the slow span inside the reference trace.",
+    "assessment_type": "trace_search_span",
+    "assessment_prompt": "Open the prepared trace search, choose one slow trace, and select the culprit span.",
     "title": "Search latency spikes after a catalog rollout",
-    "objective": "Identify the slow span inside a single reference trace for a search regression.",
+    "objective": "Open one trace from the prepared search and identify the culprit span.",
     "prompt": "The storefront search page is timing out under modest load. Follow the request from shop-web into edge-api and then into the downstream services. Your job is to identify the real slow span, not just the first service in the path.",
     "hint_1": "Start at the shop-web search trace, then expand into edge-api before deciding which downstream service owns the delay.",
     "hint_2": "The decisive clue sits on the search branch after the cache check. Find the slow child span, not the web entry span.",
@@ -22,7 +22,7 @@
     "answer_key": {
       "service": "catalog-api",
       "issue": "expensive_search_query",
-      "span_operation": "catalog.search.meilisearch"
+      "span_operation": "catalog.search.fetch_results"
     },
     "batch_plan": {
       "faulty_count": 4,
@@ -34,7 +34,7 @@
         "mode": "expensive_search_query",
         "latency_ms": 900,
         "repeat": 1,
-        "query_label": "catalog.search.meilisearch",
+        "query_label": "catalog.search.fetch_results",
         "query_text": "{\"q\":\"trail\",\"limit\":12,\"attributesToRetrieve\":[\"sku\",\"name\",\"price\"]}"
       }
     }
@@ -43,10 +43,10 @@
     "id": "l1-checkout-span",
     "level": 1,
     "variant_group": "inventory_checkout",
-    "assessment_type": "culprit_span",
-    "assessment_prompt": "Submit the culprit service, the failure mode, and the slow span inside the reference trace.",
+    "assessment_type": "trace_search_span",
+    "assessment_prompt": "Open the prepared trace search, choose one slow trace, and select the culprit span.",
     "title": "Checkout slows while payment still succeeds",
-    "objective": "Identify the repeated slow span inside a single checkout trace.",
+    "objective": "Open one trace from the prepared search and identify the culprit span.",
     "prompt": "Checkout still completes, but shoppers are waiting far too long. Trace the request from shop-web into edge-api and compare the downstream branches before you decide where the delay really lives.",
     "hint_1": "The checkout root span only tells you where the request started. Move into edge-api first and compare catalog, inventory, and payment work.",
     "hint_2": "Ignore the healthy catalog and payment work. The inventory branch repeats very similar child work before checkout can finish.",
@@ -62,7 +62,7 @@
     "answer_key": {
       "service": "inventory-api",
       "issue": "n_plus_one_queries",
-      "span_operation": "stock.reserve.n_plus_one"
+      "span_operation": "inventory.reserve.check_stock"
     },
     "batch_plan": {
       "faulty_count": 4,
@@ -74,7 +74,7 @@
         "mode": "n_plus_one_queries",
         "latency_ms": 160,
         "repeat": 6,
-        "query_label": "stock.reserve.n_plus_one",
+        "query_label": "inventory.reserve.check_stock",
         "query_text": "select warehouse_id, quantity, reserved from stock_levels where sku = $1 and warehouse_id = $2"
       }
     }
@@ -83,10 +83,10 @@
     "id": "l1-orders-span",
     "level": 1,
     "variant_group": "orders_history",
-    "assessment_type": "culprit_span",
-    "assessment_prompt": "Submit the culprit service, the failure mode, and the slow span inside the reference trace.",
+    "assessment_type": "trace_search_span",
+    "assessment_prompt": "Open the prepared trace search, choose one slow trace, and select the culprit span.",
     "title": "Order history drags for active customers",
-    "objective": "Identify the one slow history span inside a single account-history trace.",
+    "objective": "Open one trace from the prepared search and identify the culprit span.",
     "prompt": "The account history page is slow for heavy shoppers. Follow the trace from shop-web into edge-api and isolate the specific downstream span that owns the delay.",
     "hint_1": "Move past the web entry span before choosing a culprit. The answer is in one downstream branch, not the page shell.",
     "hint_2": "Compare the order-history branch with the smaller product lookup that follows it. One branch is dominated by a single heavy query.",
@@ -102,7 +102,7 @@
     "answer_key": {
       "service": "orders-api",
       "issue": "expensive_sort",
-      "span_operation": "orders.history.expensive_sort"
+      "span_operation": "orders.history.load_page"
     },
     "batch_plan": {
       "faulty_count": 4,
@@ -114,7 +114,7 @@
         "mode": "expensive_sort",
         "latency_ms": 850,
         "repeat": 1,
-        "query_label": "orders.history.expensive_sort",
+        "query_label": "orders.history.load_page",
         "query_text": "select order_ref, sku, total, status, created_at from orders where user_id = $1 order by total desc, created_at desc limit 20"
       }
     }
@@ -124,12 +124,12 @@
     "level": 2,
     "variant_group": "catalog_search",
     "assessment_type": "healthy_faulty",
-    "assessment_prompt": "From the mixed trace set, identify the healthy comparison trace and every regressed trace, then name the culprit.",
+    "assessment_prompt": "Open the trace links, pick the slow traces and the one healthy trace, then name the culprit.",
     "title": "Some search requests stay healthy while others regress",
-    "objective": "Separate healthy and regressed search traces before naming the culprit service and issue.",
-    "prompt": "Search is inconsistent after a catalog change. Some requests still look normal. Others are much slower. Compare the candidate traces carefully before you commit to the culprit.",
+    "objective": "Pick the slow traces and the one healthy trace before naming the culprit service and issue.",
+    "prompt": "Some search requests stay healthy while others are slow. Open the candidate traces and sort them before you submit.",
     "hint_1": "Start with the newest search traces and compare their downstream branch shapes, not just their root spans.",
-    "hint_2": "The healthy comparison trace avoids the long catalog search branch after the cache check.",
+    "hint_2": "The healthy trace avoids the long catalog search branch after the cache check.",
     "route": "/search",
     "traffic_path": "/search?q=camp",
     "focus_service": "shop-web",
@@ -142,7 +142,7 @@
     "answer_key": {
       "service": "catalog-api",
       "issue": "expensive_search_query",
-      "span_operation": "catalog.search.meilisearch"
+      "span_operation": "catalog.search.fetch_results"
     },
     "batch_plan": {
       "faulty_count": 2,
@@ -155,7 +155,7 @@
         "mode": "expensive_search_query",
         "latency_ms": 940,
         "repeat": 1,
-        "query_label": "catalog.search.meilisearch",
+        "query_label": "catalog.search.fetch_results",
         "query_text": "{\"q\":\"camp\",\"limit\":12,\"attributesToRetrieve\":[\"sku\",\"name\",\"price\"]}"
       }
     }
@@ -165,12 +165,12 @@
     "level": 2,
     "variant_group": "inventory_checkout",
     "assessment_type": "healthy_faulty",
-    "assessment_prompt": "From the mixed trace set, identify the healthy comparison trace and every regressed trace, then name the culprit.",
+    "assessment_prompt": "Open the trace links, pick the slow traces and the one healthy trace, then name the culprit.",
     "title": "Only some checkout traces show the inventory slowdown",
-    "objective": "Separate healthy and regressed checkout traces before naming the culprit service and issue.",
-    "prompt": "Checkout performance is inconsistent. Some requests complete normally. Others stall in the application tier. Separate the trace set before you decide which service is responsible.",
+    "objective": "Pick the slow traces and the one healthy trace before naming the culprit service and issue.",
+    "prompt": "Some checkout requests stay healthy while others slow down. Open the candidate traces and sort them before you submit.",
     "hint_1": "Start at the checkout entry span, then compare how much work happens on the inventory branch in each candidate trace.",
-    "hint_2": "The regressed traces show repeated inventory work. The healthy one collapses that work into a simpler branch.",
+    "hint_2": "The slow traces show repeated inventory work. The healthy one collapses that work into a simpler branch.",
     "route": "/checkout",
     "traffic_path": "/checkout?sku=sku-28",
     "focus_service": "shop-web",
@@ -183,7 +183,7 @@
     "answer_key": {
       "service": "inventory-api",
       "issue": "n_plus_one_queries",
-      "span_operation": "stock.reserve.n_plus_one"
+      "span_operation": "inventory.reserve.check_stock"
     },
     "batch_plan": {
       "faulty_count": 2,
@@ -196,7 +196,7 @@
         "mode": "n_plus_one_queries",
         "latency_ms": 150,
         "repeat": 6,
-        "query_label": "stock.reserve.n_plus_one",
+        "query_label": "inventory.reserve.check_stock",
         "query_text": "select warehouse_id, quantity, reserved from stock_levels where sku = $1 and warehouse_id = $2"
       }
     }
@@ -206,12 +206,12 @@
     "level": 2,
     "variant_group": "orders_history",
     "assessment_type": "healthy_faulty",
-    "assessment_prompt": "From the mixed trace set, identify the healthy comparison trace and every regressed trace, then name the culprit.",
+    "assessment_prompt": "Open the trace links, pick the slow traces and the one healthy trace, then name the culprit.",
     "title": "Order-history traces are mixed after a query-plan change",
-    "objective": "Separate healthy and regressed history traces before naming the culprit service and issue.",
-    "prompt": "History requests are inconsistent for active users. Some traces still look normal. Others now spend too long in one database-shaped span. Sort the trace set before you submit.",
+    "objective": "Pick the slow traces and the one healthy trace before naming the culprit service and issue.",
+    "prompt": "Some history requests stay healthy while others are slow. Open the candidate traces and sort them before you submit.",
     "hint_1": "Start with the history entry spans, then compare the downstream order-history branch in each trace.",
-    "hint_2": "The regressed traces spend much longer in the history query span. The healthy trace returns faster and leaves more time for the follow-up product lookup.",
+    "hint_2": "The slow traces spend much longer in the history query span. The healthy trace returns faster and leaves more time for the follow-up product lookup.",
     "route": "/account/orders",
     "traffic_path": "/account/orders?user_id=user-8",
     "focus_service": "shop-web",
@@ -224,7 +224,7 @@
     "answer_key": {
       "service": "orders-api",
       "issue": "expensive_sort",
-      "span_operation": "orders.history.expensive_sort"
+      "span_operation": "orders.history.load_page"
     },
     "batch_plan": {
       "faulty_count": 2,
@@ -237,7 +237,7 @@
         "mode": "expensive_sort",
         "latency_ms": 820,
         "repeat": 1,
-        "query_label": "orders.history.expensive_sort",
+        "query_label": "orders.history.load_page",
         "query_text": "select order_ref, sku, total, status, created_at from orders where user_id = $1 order by total desc, created_at desc limit 20"
       }
     }
@@ -265,7 +265,7 @@
     "answer_key": {
       "service": "catalog-api",
       "issue": "expensive_search_query",
-      "span_operation": "catalog.search.meilisearch"
+      "span_operation": "catalog.search.fetch_results"
     },
     "batch_plan": {
       "before_count": 2,
@@ -278,7 +278,7 @@
         "mode": "expensive_search_query",
         "latency_ms": 930,
         "repeat": 1,
-        "query_label": "catalog.search.meilisearch",
+        "query_label": "catalog.search.fetch_results",
         "query_text": "{\"q\":\"daypack\",\"limit\":12,\"attributesToRetrieve\":[\"sku\",\"name\",\"price\"]}"
       }
     }
@@ -306,7 +306,7 @@
     "answer_key": {
       "service": "inventory-api",
       "issue": "n_plus_one_queries",
-      "span_operation": "stock.reserve.n_plus_one"
+      "span_operation": "inventory.reserve.check_stock"
     },
     "batch_plan": {
       "before_count": 2,
@@ -319,7 +319,7 @@
         "mode": "n_plus_one_queries",
         "latency_ms": 170,
         "repeat": 6,
-        "query_label": "stock.reserve.n_plus_one",
+        "query_label": "inventory.reserve.check_stock",
         "query_text": "select warehouse_id, quantity, reserved from stock_levels where sku = $1 and warehouse_id = $2"
       }
     }
@@ -347,7 +347,7 @@
     "answer_key": {
       "service": "orders-api",
       "issue": "expensive_sort",
-      "span_operation": "orders.history.expensive_sort"
+      "span_operation": "orders.history.load_page"
     },
     "batch_plan": {
       "before_count": 2,
@@ -360,7 +360,7 @@
         "mode": "expensive_sort",
         "latency_ms": 860,
         "repeat": 1,
-        "query_label": "orders.history.expensive_sort",
+        "query_label": "orders.history.load_page",
         "query_text": "select order_ref, sku, total, status, created_at from orders where user_id = $1 order by total desc, created_at desc limit 20"
       }
     }
@@ -383,14 +383,14 @@
     "expected_service": "catalog-api",
     "expected_tier": "search",
     "expected_issue": "expensive_search_query",
-    "answer": "catalog-api / catalog.search.meilisearch proven by its span attribute",
+    "answer": "catalog-api / catalog.search.fetch_results proven by its span attribute",
     "search_limit": 30,
     "answer_key": {
       "service": "catalog-api",
       "issue": "expensive_search_query",
-      "span_operation": "catalog.search.meilisearch",
+      "span_operation": "catalog.search.fetch_results",
       "attribute_key": "lab.query_label",
-      "attribute_value": "catalog.search.meilisearch"
+      "attribute_value": "catalog.search.fetch_results"
     },
     "batch_plan": {
       "faulty_count": 3,
@@ -402,7 +402,7 @@
         "mode": "expensive_search_query",
         "latency_ms": 950,
         "repeat": 1,
-        "query_label": "catalog.search.meilisearch",
+        "query_label": "catalog.search.fetch_results",
         "query_text": "{\"q\":\"summit\",\"limit\":12,\"attributesToRetrieve\":[\"sku\",\"name\",\"price\"]}"
       }
     }
@@ -425,14 +425,14 @@
     "expected_service": "orders-api",
     "expected_tier": "database",
     "expected_issue": "expensive_sort",
-    "answer": "orders-api / orders.history.expensive_sort proven by its span attribute",
+    "answer": "orders-api / orders.history.load_page proven by its span attribute",
     "search_limit": 30,
     "answer_key": {
       "service": "orders-api",
       "issue": "expensive_sort",
-      "span_operation": "orders.history.expensive_sort",
+      "span_operation": "orders.history.load_page",
       "attribute_key": "lab.query_label",
-      "attribute_value": "orders.history.expensive_sort"
+      "attribute_value": "orders.history.load_page"
     },
     "batch_plan": {
       "faulty_count": 3,
@@ -444,7 +444,7 @@
         "mode": "expensive_sort",
         "latency_ms": 880,
         "repeat": 1,
-        "query_label": "orders.history.expensive_sort",
+        "query_label": "orders.history.load_page",
         "query_text": "select order_ref, sku, total, status, created_at from orders where user_id = $1 order by total desc, created_at desc limit 20"
       }
     }
@@ -472,9 +472,9 @@
     "answer_key": {
       "service": "payments-api",
       "issue": "lock_wait_timeout",
-      "span_operation": "payments.idempotency.lock_wait",
-      "attribute_key": "lab.failure_mode",
-      "attribute_value": "lock_wait_timeout"
+      "span_operation": "payments.idempotency.ensure_guard",
+      "attribute_key": "lab.wait_checkpoint",
+      "attribute_value": "payments.idempotency.guard"
     },
     "batch_plan": {
       "faulty_count": 3,
@@ -486,7 +486,7 @@
         "mode": "lock_wait_timeout",
         "latency_ms": 1200,
         "repeat": 1,
-        "query_label": "payments.idempotency.lock_wait",
+        "query_label": "payments.idempotency.ensure_guard",
         "query_text": "select pg_sleep(1.2)"
       }
     }
@@ -498,10 +498,10 @@
     "assessment_type": "intermittent_failure",
     "assessment_prompt": "From the intermittent candidate set, select every failing trace, then name the culprit service and issue.",
     "title": "Search only regresses on some requests",
-    "objective": "Identify every regressed trace in an intermittent search failure set.",
-    "prompt": "Search only slows down on some requests after the latest catalog update. Inspect the mixed trace set and select every regressed request before naming the culprit.",
+    "objective": "Identify every slow trace in an intermittent search failure set.",
+    "prompt": "Search only slows down on some requests after the latest catalog update. Inspect the mixed trace set and select every slow request before naming the culprit.",
     "hint_1": "Do not assume every search trace is bad. Compare the candidate traces and decide which ones actually show the regression.",
-    "hint_2": "The regressed traces keep the catalog search branch open much longer than the healthy traces do.",
+    "hint_2": "The slow traces keep the catalog search branch open much longer than the healthy traces do.",
     "route": "/search",
     "traffic_path": "/search?q=camp",
     "focus_service": "shop-web",
@@ -514,7 +514,7 @@
     "answer_key": {
       "service": "catalog-api",
       "issue": "expensive_search_query",
-      "span_operation": "catalog.search.meilisearch"
+      "span_operation": "catalog.search.fetch_results"
     },
     "batch_plan": {
       "faulty_count": 2,
@@ -527,7 +527,7 @@
         "mode": "expensive_search_query",
         "latency_ms": 960,
         "repeat": 1,
-        "query_label": "catalog.search.meilisearch",
+        "query_label": "catalog.search.fetch_results",
         "query_text": "{\"q\":\"camp\",\"limit\":12,\"attributesToRetrieve\":[\"sku\",\"name\",\"price\"]}"
       }
     }
@@ -555,7 +555,7 @@
     "answer_key": {
       "service": "payments-api",
       "issue": "lock_wait_timeout",
-      "span_operation": "payments.idempotency.lock_wait"
+      "span_operation": "payments.idempotency.ensure_guard"
     },
     "batch_plan": {
       "faulty_count": 2,
@@ -568,7 +568,7 @@
         "mode": "lock_wait_timeout",
         "latency_ms": 1200,
         "repeat": 1,
-        "query_label": "payments.idempotency.lock_wait",
+        "query_label": "payments.idempotency.ensure_guard",
         "query_text": "select pg_sleep(1.2)"
       }
     }
@@ -580,10 +580,10 @@
     "assessment_type": "intermittent_failure",
     "assessment_prompt": "From the intermittent candidate set, select every failing trace, then name the culprit service and issue.",
     "title": "Order history only regresses on some requests",
-    "objective": "Identify every regressed trace in an intermittent order-history slowdown set.",
-    "prompt": "History latency is inconsistent after a query tuning change. Some traces still look healthy. Others clearly regress. Select every regressed trace before naming the culprit.",
+    "objective": "Identify every slow trace in an intermittent order-history slowdown set.",
+    "prompt": "History latency is inconsistent after a query tuning change. Some traces still look healthy. Others are clearly slow. Select every slow trace before naming the culprit.",
     "hint_1": "Do not grade by route alone. Compare the candidate traces and decide which ones actually show the long history query span.",
-    "hint_2": "Only the regressed traces spend heavy time in the history query span before the featured-product lookup begins.",
+    "hint_2": "Only the slow traces spend heavy time in the history query span before the featured-product lookup begins.",
     "route": "/account/orders",
     "traffic_path": "/account/orders?user_id=user-20",
     "focus_service": "shop-web",
@@ -596,7 +596,7 @@
     "answer_key": {
       "service": "orders-api",
       "issue": "expensive_sort",
-      "span_operation": "orders.history.expensive_sort"
+      "span_operation": "orders.history.load_page"
     },
     "batch_plan": {
       "faulty_count": 2,
@@ -609,7 +609,7 @@
         "mode": "expensive_sort",
         "latency_ms": 870,
         "repeat": 1,
-        "query_label": "orders.history.expensive_sort",
+        "query_label": "orders.history.load_page",
         "query_text": "select order_ref, sku, total, status, created_at from orders where user_id = $1 order by total desc, created_at desc limit 20"
       }
     }

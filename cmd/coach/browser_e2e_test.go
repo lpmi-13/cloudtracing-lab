@@ -22,22 +22,21 @@ import (
 )
 
 func TestCoachBrowserAssessmentModes(t *testing.T) {
-	t.Run("level_1_culprit_span", func(t *testing.T) {
+	t.Run("level_1_trace_search_span", func(t *testing.T) {
 		h := newCoachE2EHarness(t, coachSessionSetup{SelectedLevel: 1, UnlockedThrough: 1})
 		tab, closeTab := newBrowserRoot(t)
 		defer closeTab()
 
 		navigateCoach(t, tab, h.coach.URL)
-		waitForLevelUI(t, tab, assessmentCulpritSpan)
+		waitForLevelUI(t, tab, assessmentTraceSearchSpan)
 		waitForReferenceTraceLink(t, tab)
 		assertAssessmentContract(t, tab)
 
 		answer := h.waitForSelectedAnswer(t)
-		setSelectValue(t, tab, "#service", answer.Service, false)
-		setSelectValue(t, tab, "#issue", answer.Issue, false)
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "Select the culprit span before submitting.")
+		waitForFeedbackContains(t, tab, "Select the trace you inspected before submitting.")
 
+		setSelectValue(t, tab, "#selected-trace", answer.SelectedTraceID, false)
 		setSelectValue(t, tab, "#selected-span", wrongSelectOptionValue(t, tab, "#selected-span", answer.SpanID), false)
 		click(t, tab, "#submit")
 		waitForFeedbackContains(t, tab, "span evidence is wrong")
@@ -56,12 +55,12 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 		setSelectValue(t, tab, "#service", answer.Service, false)
 		setSelectValue(t, tab, "#issue", answer.Issue, false)
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "Select every regressed trace before submitting.")
+		waitForFeedbackContains(t, tab, "Select every slow trace before submitting.")
 
 		setChecked(t, tab, "faulty-trace", answer.FaultyTraceIDs[0], true)
 		setChecked(t, tab, "healthy-trace", answer.HealthyTraceID, true)
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "regressed trace set is wrong")
+		waitForFeedbackContains(t, tab, "slow trace set is wrong")
 	})
 
 	t.Run("level_3_before_after", func(t *testing.T) {
@@ -154,9 +153,9 @@ func TestCoachBrowserSharedStateAndProgression(t *testing.T) {
 	navigateCoach(t, tabB, h.coach.URL)
 	navigateCoach(t, tabC, h.coach.URL)
 
-	waitForLevelUI(t, tabA, assessmentCulpritSpan)
-	waitForLevelUI(t, tabB, assessmentCulpritSpan)
-	waitForLevelUI(t, tabC, assessmentCulpritSpan)
+	waitForLevelUI(t, tabA, assessmentTraceSearchSpan)
+	waitForLevelUI(t, tabB, assessmentTraceSearchSpan)
+	waitForLevelUI(t, tabC, assessmentTraceSearchSpan)
 
 	for attempt := 1; attempt <= masteryTarget; attempt++ {
 		if attempt == masteryTarget {
@@ -209,6 +208,9 @@ func TestCoachBrowserSharedStateAndProgression(t *testing.T) {
 	waitForCheckedCount(t, tabA, `input[name="faulty-trace"]:checked`, 0)
 	waitForCheckedCount(t, tabB, `input[name="faulty-trace"]:checked`, 0)
 	waitForCheckedCount(t, tabC, `input[name="faulty-trace"]:checked`, 0)
+	waitForFeedbackHidden(t, tabA)
+	waitForFeedbackHidden(t, tabB)
+	waitForFeedbackHidden(t, tabC)
 }
 
 func TestCoachBrowserRestartReset(t *testing.T) {
@@ -268,6 +270,7 @@ type expectedAnswer struct {
 	Type            string
 	Service         string
 	Issue           string
+	SelectedTraceID string
 	SpanID          string
 	AttributeID     string
 	FaultyTraceIDs  []string
@@ -540,11 +543,15 @@ func (h *coachE2EHarness) selectedAnswer() (expectedAnswer, bool) {
 	}
 
 	answer := expectedAnswer{
-		Type:        state.Current.AssessmentType,
-		Service:     state.Current.ExpectedService,
-		Issue:       state.Current.ExpectedIssue,
-		SpanID:      state.Challenge.ExpectedSpanID,
-		AttributeID: state.Challenge.ExpectedAttributeID,
+		Type:            state.Current.AssessmentType,
+		Service:         state.Current.ExpectedService,
+		Issue:           state.Current.ExpectedIssue,
+		SpanID:          state.Challenge.ExpectedSpanID,
+		AttributeID:     state.Challenge.ExpectedAttributeID,
+		SelectedTraceID: "",
+	}
+	if len(state.Challenge.ExpectedTraceIDs) > 0 {
+		answer.SelectedTraceID = state.Challenge.ExpectedTraceIDs[0]
 	}
 	answer.FaultyTraceIDs = append(answer.FaultyTraceIDs, state.Challenge.ExpectedFaultyTraceIDs...)
 	answer.FailingTraceIDs = append(answer.FailingTraceIDs, state.Challenge.ExpectedFailingTraceIDs...)
@@ -734,7 +741,10 @@ func waitForLevelUI(t *testing.T, ctx context.Context, assessmentType string) {
 	t.Helper()
 
 	assertAssessmentContract(t, ctx)
+	waitForFeedbackHidden(t, ctx)
 	switch assessmentType {
+	case assessmentTraceSearchSpan:
+		waitForCondition(t, ctx, `document.querySelector("#selected-trace") !== null`)
 	case assessmentCulpritSpan:
 		waitForCondition(t, ctx, `document.querySelector("#selected-span") !== null`)
 	case assessmentHealthyFaulty:
@@ -763,13 +773,17 @@ func assertAssessmentContract(t *testing.T, ctx context.Context) {
 
 	waitForCondition(t, ctx, `document.getElementById("objective").textContent.trim().length > 0`)
 	waitForCondition(t, ctx, `document.getElementById("assessment-prompt").textContent.trim().length > 0`)
-	waitForCondition(t, ctx, `document.querySelectorAll("#required-evidence li").length > 0`)
-	waitForCondition(t, ctx, `document.getElementById("pass-condition").textContent.trim().length > 0`)
+	waitForCondition(t, ctx, `document.getElementById("reference-trace").textContent.trim().length > 0`)
 }
 
 func waitForFeedbackContains(t *testing.T, ctx context.Context, substring string) {
 	t.Helper()
 	waitForCondition(t, ctx, fmt.Sprintf(`document.getElementById("feedback").textContent.includes(%q)`, substring))
+}
+
+func waitForFeedbackHidden(t *testing.T, ctx context.Context) {
+	t.Helper()
+	waitForCondition(t, ctx, `document.getElementById("feedback-panel").classList.contains("hidden")`)
 }
 
 func waitForSelectedLevel(t *testing.T, ctx context.Context, level int) {
@@ -813,10 +827,15 @@ func solveSelectedLevel(t *testing.T, h *coachE2EHarness, ctx context.Context) {
 	titleBefore := textContent(t, ctx, "#title")
 	progressBefore := textContent(t, ctx, "#selected-level-progress")
 
-	setSelectValue(t, ctx, "#service", answer.Service, false)
-	setSelectValue(t, ctx, "#issue", answer.Issue, false)
+	if answer.Type != assessmentTraceSearchSpan {
+		setSelectValue(t, ctx, "#service", answer.Service, false)
+		setSelectValue(t, ctx, "#issue", answer.Issue, false)
+	}
 
 	switch answer.Type {
+	case assessmentTraceSearchSpan:
+		setSelectValue(t, ctx, "#selected-trace", answer.SelectedTraceID, false)
+		setSelectValue(t, ctx, "#selected-span", answer.SpanID, false)
 	case assessmentCulpritSpan:
 		setSelectValue(t, ctx, "#selected-span", answer.SpanID, false)
 	case assessmentHealthyFaulty:

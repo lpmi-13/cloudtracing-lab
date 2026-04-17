@@ -81,7 +81,7 @@ func (s *ordersServer) history(w http.ResponseWriter, r *http.Request) {
 
 	fault := app.FaultForRequest(s.scenarios, r, "orders-api")
 	stmt := "select order_ref, sku, total, status, created_at from orders where user_id = $1 order by created_at desc limit 20"
-	label := "orders.history.indexed"
+	label := "orders.history.load_page"
 	latency := time.Duration(0)
 
 	if fault.Mode == "expensive_sort" {

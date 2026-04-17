@@ -30,6 +30,7 @@ type learnerSession struct {
 	SelectedLevel int
 	Feedback      string
 	FeedbackOK    bool
+	HasFeedback   bool
 	Levels        map[int]*levelSession
 }
 
@@ -49,6 +50,7 @@ type coachSnapshot struct {
 	CurrentScenario publicScenario `json:"current_scenario"`
 	Feedback        string         `json:"feedback"`
 	FeedbackOK      bool           `json:"feedback_ok"`
+	HasFeedback     bool           `json:"has_feedback"`
 	SelectedLevel   int            `json:"selected_level"`
 	MasteryTarget   int            `json:"mastery_target"`
 }
@@ -58,7 +60,7 @@ var levelBlueprints = []struct {
 	Title   string
 	Summary string
 }{
-	{Number: 1, Title: "Level 1", Summary: "Find the Slow Service"},
+	{Number: 1, Title: "Level 1", Summary: "Find the Slow Span"},
 	{Number: 2, Title: "Level 2", Summary: "Find the Slow Service With Noise"},
 	{Number: 3, Title: "Level 3", Summary: "What Changed?"},
 	{Number: 4, Title: "Level 4", Summary: "Dig Into the Details"},
@@ -124,7 +126,7 @@ func validateScenarioDefinition(def scenario.Definition) error {
 	}
 
 	switch def.AssessmentType {
-	case assessmentCulpritSpan, assessmentSpanAttribute:
+	case assessmentTraceSearchSpan, assessmentCulpritSpan, assessmentSpanAttribute:
 		if def.AnswerKey.SpanOperation == "" {
 			return fmt.Errorf("scenario %q is missing answer key span_operation", def.ID)
 		}
@@ -140,7 +142,6 @@ func validateScenarioDefinition(def scenario.Definition) error {
 func newLearnerSession(levels []levelDefinition) learnerSession {
 	session := learnerSession{
 		SelectedLevel: 1,
-		Feedback:      "Level 1 is selected. Fresh traces will be prepared for the current challenge.",
 		Levels:        make(map[int]*levelSession, len(levels)),
 	}
 
@@ -222,6 +223,13 @@ func (s *coachServer) levelLabel(level int) string {
 func (s *coachServer) setFeedbackLocked(message string, ok bool) {
 	s.state.Feedback = message
 	s.state.FeedbackOK = ok
+	s.state.HasFeedback = true
+}
+
+func (s *coachServer) clearFeedbackLocked() {
+	s.state.Feedback = ""
+	s.state.FeedbackOK = false
+	s.state.HasFeedback = false
 }
 
 func (s *coachServer) unlockNextLevelIfEligibleLocked() int {
@@ -268,6 +276,7 @@ func (s *coachServer) snapshotLocked() coachSnapshot {
 		CurrentScenario: s.toPublic(selected, selectedState.Challenge),
 		Feedback:        s.state.Feedback,
 		FeedbackOK:      s.state.FeedbackOK,
+		HasFeedback:     s.state.HasFeedback,
 		SelectedLevel:   s.state.SelectedLevel,
 		MasteryTarget:   masteryTarget,
 	}

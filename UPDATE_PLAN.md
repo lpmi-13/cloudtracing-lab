@@ -196,7 +196,7 @@ Jaeger supports URL query parameters for pre-filling the search form. The coach 
 | `limit` | `&limit=100` | Sets result count |
 | `lookback` | `&lookback=1h` | Sets time range |
 | `minDuration` / `maxDuration` | `&minDuration=500ms` | Filters by span duration |
-| `tags` | `&tags=db.system%3Dpostgresql` | Pre-fills tag filter |
+| `tags` | `&tags=%7B%22db.system%22%3A%22postgresql%22%7D` | Pre-fills tag filter |
 | `traceID` | `&traceID=abc123` | Direct trace lookup |
 | `start` / `end` | `&lookback=custom&start=...&end=...` | Custom time window (microseconds since epoch) |
 
@@ -221,13 +221,13 @@ The current `max_traces: 15` in `k8s/base/jaeger/config.yaml` is an arbitrary co
 
 Combining the above into a levelled structure. The core investigation happens in Jaeger, but each level also defines deterministic evidence that the learner must submit through the coach UI. The investigation complexity scales while the scoring model remains simple and predictable.
 
-### Level 1: "Find the Slow Service" (current scenarios, refined)
+### Level 1: "Find the Slow Span" (current scenarios, refined)
 
-- **Objective**: Given a pre-filtered faulty trace set, identify the culprit service and the specific span that demonstrates the issue
-- Coach provides a pre-filled Jaeger link (service, operation, limit)
-- 5 traces, all faulty, one clear culprit
-- **Learner submits**: service ID, issue type, one trace ID, one span ID
-- **Pass condition**: selected service, issue, trace, and span all match the scenario answer key
+- **Objective**: Given a pre-filled Jaeger search, open one relevant trace and identify the specific culprit span inside it
+- Coach provides a pre-filled Jaeger search link (service, operation, limit, batch tag), not a direct trace link
+- 5 traces, all faulty, one clear culprit span pattern
+- **Learner submits**: one trace ID and one span ID
+- **Pass condition**: the selected trace belongs to the prepared result set and the selected span matches the scenario answer key
 - **Mastery gate**: **5 correct attempts** across multiple variants of the same scenario shape
 - **Jaeger skills tested**: waterfall reading, span hierarchy navigation
 

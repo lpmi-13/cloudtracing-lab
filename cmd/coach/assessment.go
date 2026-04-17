@@ -6,15 +6,17 @@ import (
 	"strings"
 	"time"
 
+	"cloudtracing/internal/app"
 	"cloudtracing/internal/scenario"
 )
 
 const (
-	assessmentCulpritSpan   = "culprit_span"
-	assessmentHealthyFaulty = "healthy_faulty"
-	assessmentBeforeAfter   = "before_after"
-	assessmentSpanAttribute = "span_attribute"
-	assessmentIntermittent  = "intermittent_failure"
+	assessmentTraceSearchSpan = "trace_search_span"
+	assessmentCulpritSpan     = "culprit_span"
+	assessmentHealthyFaulty   = "healthy_faulty"
+	assessmentBeforeAfter     = "before_after"
+	assessmentSpanAttribute   = "span_attribute"
+	assessmentIntermittent    = "intermittent_failure"
 )
 
 type traceRecord struct {
@@ -40,9 +42,16 @@ type publicTraceOption struct {
 	URL   string `json:"url,omitempty"`
 }
 
-type publicSpanOption struct {
-	ID    string `json:"id"`
+type publicLinkOption struct {
 	Label string `json:"label"`
+	URL   string `json:"url,omitempty"`
+}
+
+type publicSpanOption struct {
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	Service   string `json:"service"`
+	Operation string `json:"operation"`
 }
 
 type publicAttributeOption struct {
@@ -51,26 +60,30 @@ type publicAttributeOption struct {
 }
 
 type publicAssessment struct {
-	Ready               bool                    `json:"ready"`
-	Type                string                  `json:"type"`
-	Prompt              string                  `json:"prompt"`
-	RequiredEvidence    []string                `json:"required_evidence"`
-	PassCondition       string                  `json:"pass_condition"`
-	StartGuide          string                  `json:"start_guide"`
-	ReferenceTrace      *publicTraceOption      `json:"reference_trace,omitempty"`
-	TraceChoices        []publicTraceOption     `json:"trace_choices,omitempty"`
-	FaultyTraceChoices  []publicTraceOption     `json:"faulty_trace_choices,omitempty"`
-	HealthyTraceChoices []publicTraceOption     `json:"healthy_trace_choices,omitempty"`
-	BeforeTraceChoices  []publicTraceOption     `json:"before_trace_choices,omitempty"`
-	AfterTraceChoices   []publicTraceOption     `json:"after_trace_choices,omitempty"`
-	FailingTraceChoices []publicTraceOption     `json:"failing_trace_choices,omitempty"`
-	SpanChoices         []publicSpanOption      `json:"span_choices,omitempty"`
-	AttributeChoices    []publicAttributeOption `json:"attribute_choices,omitempty"`
-	UnavailableReason   string                  `json:"unavailable_reason,omitempty"`
+	Ready                bool                               `json:"ready"`
+	Type                 string                             `json:"type"`
+	Prompt               string                             `json:"prompt"`
+	RequiredEvidence     []string                           `json:"required_evidence"`
+	PassCondition        string                             `json:"pass_condition"`
+	StartGuide           string                             `json:"start_guide"`
+	InvestigationLink    *publicLinkOption                  `json:"investigation_link,omitempty"`
+	ReferenceTrace       *publicTraceOption                 `json:"reference_trace,omitempty"`
+	TraceChoices         []publicTraceOption                `json:"trace_choices,omitempty"`
+	FaultyTraceChoices   []publicTraceOption                `json:"faulty_trace_choices,omitempty"`
+	HealthyTraceChoices  []publicTraceOption                `json:"healthy_trace_choices,omitempty"`
+	BeforeTraceChoices   []publicTraceOption                `json:"before_trace_choices,omitempty"`
+	AfterTraceChoices    []publicTraceOption                `json:"after_trace_choices,omitempty"`
+	FailingTraceChoices  []publicTraceOption                `json:"failing_trace_choices,omitempty"`
+	TraceSpanChoices     map[string][]publicSpanOption      `json:"trace_span_choices,omitempty"`
+	SpanChoices          []publicSpanOption                 `json:"span_choices,omitempty"`
+	SpanAttributeChoices map[string][]publicAttributeOption `json:"span_attribute_choices,omitempty"`
+	AttributeChoices     []publicAttributeOption            `json:"attribute_choices,omitempty"`
+	UnavailableReason    string                             `json:"unavailable_reason,omitempty"`
 }
 
 type preparedChallenge struct {
 	Public                  publicAssessment
+	ExpectedTraceIDs        []string
 	ExpectedSpanID          string
 	ExpectedAttributeID     string
 	ExpectedFaultyTraceIDs  []string
@@ -105,6 +118,11 @@ func assessmentShell(def scenario.Definition) publicAssessment {
 
 func requiredEvidenceFor(def scenario.Definition) []string {
 	switch def.AssessmentType {
+	case assessmentTraceSearchSpan:
+		return []string{
+			"Select the trace you inspected from the prepared search results.",
+			"Select the culprit span inside that trace.",
+		}
 	case assessmentCulpritSpan:
 		return []string{
 			"Select the culprit service.",
@@ -115,7 +133,7 @@ func requiredEvidenceFor(def scenario.Definition) []string {
 		return []string{
 			"Select the culprit service.",
 			"Select the failure mode.",
-			"Select every regressed trace from the mixed candidate set.",
+			"Select every slow trace from the mixed candidate set.",
 			"Select the one healthy trace from the same candidate set.",
 		}
 	case assessmentBeforeAfter:
@@ -123,7 +141,7 @@ func requiredEvidenceFor(def scenario.Definition) []string {
 			"Select the culprit service.",
 			"Select the failure mode.",
 			"Select one baseline trace from before the regression.",
-			"Select one regressed trace from after the change.",
+			"Select one slow trace from after the change.",
 		}
 	case assessmentSpanAttribute:
 		return []string{
@@ -148,10 +166,12 @@ func requiredEvidenceFor(def scenario.Definition) []string {
 
 func passConditionFor(def scenario.Definition) string {
 	switch def.AssessmentType {
+	case assessmentTraceSearchSpan:
+		return "Full credit requires a valid trace from the prepared search and the correct culprit span from that trace."
 	case assessmentCulpritSpan:
 		return "Full credit requires the correct service, issue, and culprit span from the reference trace."
 	case assessmentHealthyFaulty:
-		return "Full credit requires the correct service, issue, both regressed traces, and the healthy comparison trace."
+		return "Full credit requires the correct service, issue, all slow traces, and the healthy trace."
 	case assessmentBeforeAfter:
 		return "Full credit requires the correct service, issue, one valid before trace, and one valid after trace."
 	case assessmentSpanAttribute:
@@ -166,15 +186,15 @@ func passConditionFor(def scenario.Definition) string {
 func startGuideFor(def scenario.Definition) string {
 	switch def.Level {
 	case 1:
-		return fmt.Sprintf("Start with service %s and operation %s. Use the reference trace to isolate the single slow span.", def.FocusService, def.FocusOperation)
+		return "Open the prepared trace search, inspect one slow trace, and pick the culprit span."
 	case 2:
-		return fmt.Sprintf("Start at the entry operation %s, then separate the healthy traces from the regressed ones yourself.", def.FocusOperation)
+		return "Open the trace links, pick the slow ones, and choose the one healthy trace."
 	case 3:
-		return fmt.Sprintf("Compare the before and after traces for %s, then confirm which downstream branch changed.", def.Route)
+		return fmt.Sprintf("Compare one before trace with one slow after trace for %s.", def.Route)
 	case 4:
-		return fmt.Sprintf("Open the reference trace for %s, find the culprit span, then prove it with a supporting attribute.", def.Route)
+		return fmt.Sprintf("Open the reference trace for %s, find the culprit span, then prove it with one attribute.", def.Route)
 	case 5:
-		return fmt.Sprintf("Inspect the candidate traces for %s and decide which requests actually fail before naming the culprit.", def.Route)
+		return fmt.Sprintf("Open the trace links for %s and select the requests that actually fail.", def.Route)
 	default:
 		return fmt.Sprintf("Inspect the newest traces for %s.", def.Route)
 	}
@@ -230,10 +250,37 @@ func normalizeBatchPlan(def scenario.Definition, fallbackCount int) scenario.Bat
 	return plan
 }
 
-func buildPreparedChallenge(def scenario.Definition, groups traceGroups, traceURL func(string) string) (*preparedChallenge, error) {
+func buildPreparedChallenge(def scenario.Definition, groups traceGroups, traceURL func(string) string, searchURL func(string, string, int, map[string]string) string) (*preparedChallenge, error) {
 	public := assessmentShell(def)
 
 	switch def.AssessmentType {
+	case assessmentTraceSearchSpan:
+		if len(groups.Faulty) == 0 {
+			return nil, fmt.Errorf("no faulty traces available for %s", def.ID)
+		}
+		choices := append([]traceRecord{}, groups.Faulty...)
+		sortTraceRecords(choices)
+
+		traceSpanChoices := make(map[string][]publicSpanOption, len(choices))
+		for _, trace := range choices {
+			traceSpanChoices[trace.ID] = spanChoicesForTrace(def, trace)
+		}
+
+		searchTags := map[string]string{}
+		if batchID := sharedTraceAttributeValue(choices, app.BatchAttribute); batchID != "" {
+			searchTags[app.BatchAttribute] = batchID
+		}
+
+		public.Ready = true
+		public.InvestigationLink = searchLinkOption(traceSearchLabel(def), searchURL(def.FocusService, def.FocusOperation, max(def.SearchLimit, len(choices)*2), searchTags))
+		public.TraceChoices = traceOptions(choices, traceURL)
+		public.TraceSpanChoices = traceSpanChoices
+		return &preparedChallenge{
+			Public:           public,
+			ExpectedTraceIDs: traceIDs(choices),
+			ExpectedSpanID:   spanChoiceID(def.ExpectedService, def.AnswerKey.SpanOperation),
+		}, nil
+
 	case assessmentCulpritSpan:
 		if len(groups.Faulty) == 0 {
 			return nil, fmt.Errorf("no faulty traces available for %s", def.ID)
@@ -299,7 +346,8 @@ func buildPreparedChallenge(def scenario.Definition, groups traceGroups, traceUR
 		if !ok {
 			return nil, fmt.Errorf("culprit span missing from reference trace for %s", def.ID)
 		}
-		attributeChoices := attributeChoicesForTrace(reference)
+		attributeChoicesBySpan := attributeChoicesBySpanForTrace(reference)
+		attributeChoices := attributeChoicesBySpan[expectedSpanID]
 		expectedAttributeID := attributeChoiceID(def.AnswerKey.AttributeKey, def.AnswerKey.AttributeValue)
 		if expectedAttributeID == "=" {
 			expectedAttributeID = attributeChoiceID(def.AnswerKey.SpanAttributeKey, def.AnswerKey.SpanAttributeValue)
@@ -317,6 +365,7 @@ func buildPreparedChallenge(def scenario.Definition, groups traceGroups, traceUR
 		public.Ready = true
 		public.ReferenceTrace = traceOption(reference, traceURL)
 		public.SpanChoices = spanChoices
+		public.SpanAttributeChoices = attributeChoicesBySpan
 		public.AttributeChoices = attributeChoices
 		return &preparedChallenge{
 			Public:              public,
@@ -357,6 +406,17 @@ func gradeSubmission(def scenario.Definition, challenge *preparedChallenge, req 
 	}
 
 	switch def.AssessmentType {
+	case assessmentTraceSearchSpan:
+		traceOK := containsID(challenge.ExpectedTraceIDs, req.SelectedTraceID)
+		spanOK := req.SelectedSpan == challenge.ExpectedSpanID
+		if traceOK && spanOK {
+			return gradeResult{
+				Pass:    true,
+				Message: "Correct. You chose a valid trace from the prepared search and isolated the culprit span.",
+			}
+		}
+		return gradeResult{Pass: false, Message: traceSearchSpanFeedback(traceOK, spanOK)}
+
 	case assessmentCulpritSpan:
 		spanOK := req.SelectedSpan == challenge.ExpectedSpanID
 		if serviceOK && issueOK && spanOK {
@@ -373,7 +433,7 @@ func gradeSubmission(def scenario.Definition, challenge *preparedChallenge, req 
 		if serviceOK && issueOK && faultyOK && healthyOK {
 			return gradeResult{
 				Pass:    true,
-				Message: "Correct. You separated the regressed traces from the healthy comparison trace and named the right culprit.",
+				Message: "Correct. You separated the slow traces from the healthy trace and named the right culprit.",
 			}
 		}
 		return gradeResult{Pass: false, Message: mixedTraceFeedback(serviceOK, issueOK, faultyOK, healthyOK)}
@@ -418,6 +478,17 @@ func gradeSubmission(def scenario.Definition, challenge *preparedChallenge, req 
 	}
 }
 
+func traceSearchSpanFeedback(traceOK, spanOK bool) string {
+	switch {
+	case !traceOK && spanOK:
+		return "The culprit span is right, but the trace choice is wrong. Reopen the prepared search and choose one of the intended traces."
+	case traceOK && !spanOK:
+		return "The trace choice is right, but the span evidence is wrong. Reopen that trace and identify the specific slow span."
+	default:
+		return "Neither the trace choice nor the span evidence is correct yet. Reopen the prepared search and inspect the slow branch again."
+	}
+}
+
 func culpritSpanFeedback(serviceOK, issueOK, spanOK bool) string {
 	if serviceOK && issueOK && !spanOK {
 		return "The diagnosis is right, but the span evidence is wrong. Reopen the reference trace and identify the specific slow span."
@@ -431,11 +502,11 @@ func culpritSpanFeedback(serviceOK, issueOK, spanOK bool) string {
 func mixedTraceFeedback(serviceOK, issueOK, faultyOK, healthyOK bool) string {
 	switch {
 	case serviceOK && issueOK && !faultyOK && healthyOK:
-		return "The diagnosis is right, but the regressed trace set is wrong. Compare the candidate traces again and select every slow one."
+		return "The diagnosis is right, but the slow trace set is wrong. Compare the candidate traces again and select every slow one."
 	case serviceOK && issueOK && faultyOK && !healthyOK:
-		return "The diagnosis is right, but the healthy comparison trace is wrong. Pick the one trace that stayed healthy."
+		return "The diagnosis is right, but the healthy trace is wrong. Pick the one trace that stayed healthy."
 	case serviceOK && issueOK:
-		return "The diagnosis is right, but the trace grouping is wrong. Separate the healthy trace from the regressed ones before resubmitting."
+		return "The diagnosis is right, but the trace grouping is wrong. Separate the healthy trace from the slow ones before resubmitting."
 	default:
 		return diagnosisFeedback(serviceOK, issueOK) + " The trace grouping still needs work."
 	}
@@ -446,7 +517,7 @@ func beforeAfterFeedback(serviceOK, issueOK, beforeOK, afterOK bool) string {
 	case serviceOK && issueOK && !beforeOK && afterOK:
 		return "The diagnosis is right, but the baseline trace is wrong. Pick a trace from before the regression window."
 	case serviceOK && issueOK && beforeOK && !afterOK:
-		return "The diagnosis is right, but the after trace is wrong. Pick one of the regressed traces from after the change."
+		return "The diagnosis is right, but the after trace is wrong. Pick one of the slow traces from after the change."
 	case serviceOK && issueOK:
 		return "The diagnosis is right, but the comparison pair is wrong. Recheck which trace belongs to each side of the change."
 	default:
@@ -528,8 +599,10 @@ func spanChoicesForTrace(def scenario.Definition, trace traceRecord) []publicSpa
 		}
 		seen[key] = struct{}{}
 		choices = append(choices, publicSpanOption{
-			ID:    spanChoiceID(span.Service, span.Operation),
-			Label: fmt.Sprintf("%s -> %s", span.Service, span.Operation),
+			ID:        spanChoiceID(span.Service, span.Operation),
+			Label:     span.Operation,
+			Service:   span.Service,
+			Operation: span.Operation,
 		})
 	}
 
@@ -539,11 +612,13 @@ func spanChoicesForTrace(def scenario.Definition, trace traceRecord) []publicSpa
 	return choices
 }
 
-func attributeChoicesForTrace(trace traceRecord) []publicAttributeOption {
-	options := make([]publicAttributeOption, 0, len(trace.Spans))
-	seen := map[string]struct{}{}
+func attributeChoicesBySpanForTrace(trace traceRecord) map[string][]publicAttributeOption {
+	options := make(map[string][]publicAttributeOption, len(trace.Spans))
 
 	for _, span := range trace.Spans {
+		spanID := spanChoiceID(span.Service, span.Operation)
+		seen := map[string]struct{}{}
+		choices := make([]publicAttributeOption, 0, len(span.Tags))
 		for key, value := range span.Tags {
 			if !isAssessmentAttribute(key) {
 				continue
@@ -553,16 +628,19 @@ func attributeChoicesForTrace(trace traceRecord) []publicAttributeOption {
 				continue
 			}
 			seen[id] = struct{}{}
-			options = append(options, publicAttributeOption{
+			choices = append(choices, publicAttributeOption{
 				ID:    id,
 				Label: fmt.Sprintf("%s = %s", key, value),
 			})
 		}
+		sort.Slice(choices, func(i, j int) bool {
+			return choices[i].Label < choices[j].Label
+		})
+		if len(choices) > 0 {
+			options[spanID] = choices
+		}
 	}
 
-	sort.Slice(options, func(i, j int) bool {
-		return options[i].Label < options[j].Label
-	})
 	return options
 }
 
@@ -577,6 +655,40 @@ func traceIDs(records []traceRecord) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+func sharedTraceAttributeValue(records []traceRecord, key string) string {
+	if len(records) == 0 || key == "" {
+		return ""
+	}
+
+	var shared string
+	for _, record := range records {
+		value := traceAttributeValue(record, key)
+		if value == "" {
+			return ""
+		}
+		if shared == "" {
+			shared = value
+			continue
+		}
+		if shared != value {
+			return ""
+		}
+	}
+	return shared
+}
+
+func traceAttributeValue(record traceRecord, key string) string {
+	if key == "" {
+		return ""
+	}
+	for _, span := range record.Spans {
+		if value := span.Tags[key]; value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func traceLabel(record traceRecord) string {
@@ -596,6 +708,20 @@ func spanChoiceID(service, operation string) string {
 
 func attributeChoiceID(key, value string) string {
 	return key + "=" + value
+}
+
+func searchLinkOption(label, url string) *publicLinkOption {
+	return &publicLinkOption{
+		Label: label,
+		URL:   url,
+	}
+}
+
+func traceSearchLabel(def scenario.Definition) string {
+	if def.FocusOperation == "" {
+		return "Open the prepared trace search"
+	}
+	return fmt.Sprintf("Open the prepared search for %s", def.FocusOperation)
 }
 
 func findSpan(trace traceRecord, service, operation string) (traceSpan, bool) {
