@@ -9,7 +9,10 @@ import (
 	"cloudtracing/internal/scenario"
 )
 
-const masteryTarget = 5
+const (
+	masteryTarget           = 5
+	maxAttemptsPerChallenge = 2
+)
 
 type levelDefinition struct {
 	Number    int
@@ -19,11 +22,11 @@ type levelDefinition struct {
 }
 
 type levelSession struct {
-	Unlocked     bool
-	MasteryCount int
-	Current      scenario.Definition
-	Prepared     bool
-	Challenge    *preparedChallenge
+	MasteryCount      int
+	IncorrectAttempts int
+	Current           scenario.Definition
+	Prepared          bool
+	Challenge         *preparedChallenge
 }
 
 type learnerSession struct {
@@ -146,9 +149,7 @@ func newLearnerSession(levels []levelDefinition) learnerSession {
 	}
 
 	for _, level := range levels {
-		session.Levels[level.Number] = &levelSession{
-			Unlocked: level.Number == 1,
-		}
+		session.Levels[level.Number] = &levelSession{}
 	}
 
 	if len(levels) > 0 {
@@ -199,6 +200,7 @@ func (s *coachServer) ensureScenarioForLevelLocked(level int) scenario.Definitio
 
 	def, _ := s.levelDefinition(level)
 	state.Current = pickRandomScenario(def.Scenarios, "")
+	state.IncorrectAttempts = 0
 	state.Prepared = false
 	state.Challenge = nil
 	return state.Current
@@ -212,12 +214,45 @@ func (s *coachServer) pickRandomForLevel(level int, exclude string) scenario.Def
 	return pickRandomScenario(def.Scenarios, exclude)
 }
 
+func (s *coachServer) pickRandomForLevelDifferentVariant(level int, excludeID, excludeVariantGroup string) scenario.Definition {
+	def, ok := s.levelDefinition(level)
+	if !ok {
+		return scenario.Definition{}
+	}
+
+	filtered := make([]scenario.Definition, 0, len(def.Scenarios))
+	for _, candidate := range def.Scenarios {
+		if candidate.ID == excludeID && len(def.Scenarios) > 1 {
+			continue
+		}
+		if excludeVariantGroup != "" && candidate.VariantGroup == excludeVariantGroup {
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	if len(filtered) == 0 {
+		return pickRandomScenario(def.Scenarios, excludeID)
+	}
+	return pickRandomScenario(filtered, "")
+}
+
 func (s *coachServer) levelLabel(level int) string {
 	def, ok := s.levelDefinition(level)
 	if !ok {
 		return fmt.Sprintf("Level %d", level)
 	}
 	return fmt.Sprintf("%s: %s", def.Title, def.Summary)
+}
+
+func (s *coachServer) setLevelScenarioLocked(level int, next scenario.Definition) {
+	state := s.levelStateLocked(level)
+	if state == nil {
+		return
+	}
+	state.Current = next
+	state.IncorrectAttempts = 0
+	state.Prepared = false
+	state.Challenge = nil
 }
 
 func (s *coachServer) setFeedbackLocked(message string, ok bool) {
@@ -232,27 +267,6 @@ func (s *coachServer) clearFeedbackLocked() {
 	s.state.HasFeedback = false
 }
 
-func (s *coachServer) unlockNextLevelIfEligibleLocked() int {
-	selected := s.state.SelectedLevel
-	current := s.levelStateLocked(selected)
-	if current == nil || current.MasteryCount < masteryTarget {
-		return 0
-	}
-
-	nextLevel := selected + 1
-	if nextLevel > len(s.levels) {
-		return 0
-	}
-
-	next := s.levelStateLocked(nextLevel)
-	if next == nil || next.Unlocked {
-		return 0
-	}
-
-	next.Unlocked = true
-	return nextLevel
-}
-
 func (s *coachServer) snapshotLocked() coachSnapshot {
 	levels := make([]publicLevel, 0, len(s.levels))
 	for _, level := range s.levels {
@@ -261,7 +275,7 @@ func (s *coachServer) snapshotLocked() coachSnapshot {
 			Number:        level.Number,
 			Title:         level.Title,
 			Summary:       level.Summary,
-			Unlocked:      state.Unlocked,
+			Unlocked:      true,
 			Selected:      s.state.SelectedLevel == level.Number,
 			Mastered:      state.MasteryCount >= masteryTarget,
 			MasteryCount:  state.MasteryCount,

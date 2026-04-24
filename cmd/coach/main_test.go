@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -176,6 +179,27 @@ func TestGradeSubmissionAllowsAnyValidBeforeAfterPair(t *testing.T) {
 	}
 }
 
+func TestBuildPreparedChallengeMergesBeforeAfterTraceChoices(t *testing.T) {
+	def := firstScenarioByLevel(t, testScenarioSet(), 3)
+	challenge, err := buildPreparedChallenge(def, traceGroups{
+		Before: []traceRecord{traceFixture("before-1", def, nil)},
+		After:  []traceRecord{traceFixture("after-1", def, nil)},
+	}, func(id string) string { return "/trace/" + id }, func(string, string, int, map[string]string) string { return "" })
+	if err != nil {
+		t.Fatalf("buildPreparedChallenge: %v", err)
+	}
+
+	if len(challenge.Public.TraceChoices) != 2 {
+		t.Fatalf("expected merged trace choices, got %+v", challenge.Public.TraceChoices)
+	}
+	if !containsID(challenge.ExpectedBeforeTraceIDs, "before-1") {
+		t.Fatalf("expected before trace id to be preserved, got %+v", challenge.ExpectedBeforeTraceIDs)
+	}
+	if !containsID(challenge.ExpectedAfterTraceIDs, "after-1") {
+		t.Fatalf("expected after trace id to be preserved, got %+v", challenge.ExpectedAfterTraceIDs)
+	}
+}
+
 func TestGradeSubmissionRequiresSupportingAttribute(t *testing.T) {
 	def := firstScenarioByLevel(t, testScenarioSet(), 4)
 	challenge, err := buildPreparedChallenge(def, traceGroups{
@@ -210,52 +234,63 @@ func TestGradeSubmissionRequiresSupportingAttribute(t *testing.T) {
 	}
 }
 
-func TestUnlockNextLevelRequiresFiveCorrectAttemptsOnSelectedLevel(t *testing.T) {
+func TestSnapshotMarksEveryLevelSelectable(t *testing.T) {
 	s := newTestCoachServer(t, testScenarioSet())
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for attempts := 1; attempts < masteryTarget; attempts++ {
-		s.state.Levels[1].MasteryCount = attempts
-		if got := s.unlockNextLevelIfEligibleLocked(); got != 0 {
-			t.Fatalf("expected no unlock at %d attempts, got level %d", attempts, got)
+	snapshot := s.snapshotLocked()
+	for _, level := range snapshot.Levels {
+		if !level.Unlocked {
+			t.Fatalf("expected level %d to be selectable", level.Number)
 		}
-		if s.state.Levels[2].Unlocked {
-			t.Fatalf("level 2 should still be locked at %d attempts", attempts)
-		}
-	}
-
-	s.state.Levels[1].MasteryCount = masteryTarget
-	if got := s.unlockNextLevelIfEligibleLocked(); got != 2 {
-		t.Fatalf("expected level 2 to unlock at five attempts, got %d", got)
-	}
-	if !s.state.Levels[2].Unlocked {
-		t.Fatal("expected level 2 to be unlocked")
 	}
 }
 
-func TestUnlockingDoesNotSkipAheadWhenAnotherLevelIsSelected(t *testing.T) {
+func TestSelectLevelAllowsAnyLevelWithoutPriorMastery(t *testing.T) {
 	s := newTestCoachServer(t, testScenarioSet())
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.state.Levels[5].Current = s.levels[4].Scenarios[0]
+	s.state.Levels[5].Prepared = true
+	s.mu.Unlock()
 
-	s.state.Levels[2].Unlocked = true
-	s.state.Levels[1].MasteryCount = masteryTarget
-	s.state.Levels[2].MasteryCount = masteryTarget
-	s.state.SelectedLevel = 1
-
-	if got := s.unlockNextLevelIfEligibleLocked(); got != 0 {
-		t.Fatalf("expected no new unlock while level 1 is selected, got %d", got)
+	reqBody, err := json.Marshal(selectLevelRequest{Level: 5})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
 	}
-	if s.state.Levels[3].Unlocked {
-		t.Fatal("level 3 should still be locked")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/levels/select", strings.NewReader(string(reqBody)))
+	s.selectLevel(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected selecting level 5 to succeed, got status %d body %q", rec.Code, rec.Body.String())
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.state.SelectedLevel != 5 {
+		t.Fatalf("expected selected level 5, got %d", s.state.SelectedLevel)
+	}
+}
+
+func TestPickRandomForLevelDifferentVariantPrefersOtherVariantGroup(t *testing.T) {
+	s := &coachServer{
+		levels: []levelDefinition{
+			{
+				Number: 1,
+				Scenarios: []scenario.Definition{
+					{ID: "same-a", VariantGroup: "group-a"},
+					{ID: "same-b", VariantGroup: "group-a"},
+					{ID: "other", VariantGroup: "group-b"},
+				},
+			},
+		},
 	}
 
-	s.state.SelectedLevel = 2
-	if got := s.unlockNextLevelIfEligibleLocked(); got != 3 {
-		t.Fatalf("expected level 3 to unlock when level 2 is selected and mastered, got %d", got)
+	got := s.pickRandomForLevelDifferentVariant(1, "same-a", "group-a")
+	if got.ID != "other" {
+		t.Fatalf("expected different variant group to be preferred, got %+v", got)
 	}
 }
 
@@ -299,6 +334,93 @@ func TestSearchURLIncludesBatchTags(t *testing.T) {
 	}
 	if !strings.Contains(got, "%22lab.batch_id%22%3A%22batch-42%22") {
 		t.Fatalf("expected encoded batch tag in search URL, got %q", got)
+	}
+}
+
+func TestGradeRotatesChallengeAfterSecondIncorrectSubmission(t *testing.T) {
+	s := newTestCoachServer(t, testScenarioSet())
+	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer web.Close()
+
+	s.client = web.Client()
+	s.webURL = web.URL
+	s.findRecentTraces = func(_ context.Context, _ string, _ string, since time.Time, need, _ int, batchID string) ([]traceRecord, error) {
+		s.mu.RLock()
+		def := s.state.Levels[s.state.SelectedLevel].Current
+		s.mu.RUnlock()
+
+		traces := make([]traceRecord, 0, need)
+		for i := 0; i < need; i++ {
+			trace := traceFixture(fmt.Sprintf("%s-%d", batchID, i), def, map[string]string{
+				app.BatchAttribute: batchID,
+			})
+			trace.Start = since.Add(time.Duration(i+1) * time.Millisecond)
+			traces = append(traces, trace)
+		}
+		return traces, nil
+	}
+
+	s.mu.Lock()
+	def := s.state.Levels[1].Current
+	challenge, err := buildPreparedChallenge(def, traceGroups{
+		Faulty: []traceRecord{traceFixture("trace-1", def, map[string]string{app.BatchAttribute: "batch-initial"})},
+	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" })
+	if err != nil {
+		s.mu.Unlock()
+		t.Fatalf("buildPreparedChallenge: %v", err)
+	}
+	s.state.Levels[1].Prepared = true
+	s.state.Levels[1].Challenge = challenge
+	s.mu.Unlock()
+
+	reqBody, err := json.Marshal(gradeRequest{
+		ScenarioID:      def.ID,
+		SelectedTraceID: "trace-1",
+		SelectedSpan:    "wrong|span",
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/grade", strings.NewReader(string(reqBody)))
+	s.grade(rec, req)
+
+	s.mu.RLock()
+	if got := s.state.Levels[1].IncorrectAttempts; got != 1 {
+		s.mu.RUnlock()
+		t.Fatalf("expected first wrong submission to record one incorrect attempt, got %d", got)
+	}
+	if got := s.state.Levels[1].Current.ID; got != def.ID {
+		s.mu.RUnlock()
+		t.Fatalf("expected challenge to stay on first wrong submission, got %q", got)
+	}
+	if !strings.Contains(s.state.Feedback, "1 attempt remain") {
+		s.mu.RUnlock()
+		t.Fatalf("expected first wrong feedback to mention one attempt remaining, got %q", s.state.Feedback)
+	}
+	s.mu.RUnlock()
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/grade", strings.NewReader(string(reqBody)))
+	s.grade(rec, req)
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if got := s.state.Levels[1].IncorrectAttempts; got != 0 {
+		t.Fatalf("expected incorrect attempts to reset after rotation, got %d", got)
+	}
+	if got := s.state.Levels[1].Current.ID; got == def.ID {
+		t.Fatalf("expected a new challenge after the second wrong submission, still on %q", got)
+	}
+	if !s.state.Levels[1].Prepared || s.state.Levels[1].Challenge == nil {
+		t.Fatalf("expected the new challenge to be prepared, got prepared=%t challenge=%+v", s.state.Levels[1].Prepared, s.state.Levels[1].Challenge)
+	}
+	if !strings.Contains(s.state.Feedback, "used both attempts on this challenge") {
+		t.Fatalf("expected rotation feedback after second wrong submission, got %q", s.state.Feedback)
 	}
 }
 

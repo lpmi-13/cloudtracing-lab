@@ -223,10 +223,7 @@ func (s *coachServer) nextChallenge(w http.ResponseWriter, r *http.Request) {
 	next := s.pickRandomForLevel(level, current.ID)
 
 	s.mu.Lock()
-	state := s.levelStateLocked(level)
-	state.Current = next
-	state.Prepared = false
-	state.Challenge = nil
+	s.setLevelScenarioLocked(level, next)
 	s.mu.Unlock()
 
 	_, err := s.prepareLevelScenario(r.Context(), level, defaultTraceBatchSize)
@@ -262,19 +259,7 @@ func (s *coachServer) selectLevel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	target := s.levelStateLocked(req.Level)
-	if !target.Unlocked {
-		s.setFeedbackLocked(fmt.Sprintf("%s is still locked. Master the previous level at %d/%d to unlock it.", s.levelLabel(req.Level), masteryTarget, masteryTarget), false)
-		snapshot, subscribers := s.snapshotAndSubscribersLocked()
-		s.mu.Unlock()
-		s.actionMu.Unlock()
-		s.broadcast(snapshot, subscribers)
-		app.WriteJSON(w, http.StatusConflict, snapshot)
-		return
-	}
-
 	s.state.SelectedLevel = req.Level
-	unlockedLevel := s.unlockNextLevelIfEligibleLocked()
 	selected := s.ensureScenarioForLevelLocked(req.Level)
 	prepared := s.levelStateLocked(req.Level).Prepared
 	s.mu.Unlock()
@@ -288,9 +273,6 @@ func (s *coachServer) selectLevel(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("prepare selected level challenge for %s (%s): %v", s.levelLabel(req.Level), selected.ID, err)
 		message := fmt.Sprintf("%s selected.", s.levelLabel(req.Level))
-		if unlockedLevel > 0 {
-			message += fmt.Sprintf(" %s is now unlocked.", s.levelLabel(unlockedLevel))
-		}
 		message += " The challenge loaded, but automatic trace generation failed. Refresh or request a new challenge and try again."
 		s.setFeedbackLocked(message, false)
 	} else {
@@ -354,7 +336,44 @@ func (s *coachServer) grade(w http.ResponseWriter, r *http.Request) {
 
 	result := gradeSubmission(current, state.Challenge, req)
 	if !result.Pass {
-		s.setFeedbackLocked(fmt.Sprintf("%s %s remains at %d/%d mastery.", result.Message, s.levelLabel(level), state.MasteryCount, masteryTarget), false)
+		if state.Challenge == nil || !state.Challenge.Public.Ready {
+			s.setFeedbackLocked(fmt.Sprintf("%s %s remains at %d/%d mastery.", result.Message, s.levelLabel(level), state.MasteryCount, masteryTarget), false)
+			snapshot, subscribers := s.snapshotAndSubscribersLocked()
+			s.mu.Unlock()
+			s.actionMu.Unlock()
+			s.broadcast(snapshot, subscribers)
+			app.WriteJSON(w, http.StatusOK, snapshot)
+			return
+		}
+
+		state.IncorrectAttempts++
+		if state.IncorrectAttempts < maxAttemptsPerChallenge {
+			remaining := maxAttemptsPerChallenge - state.IncorrectAttempts
+			attemptLabel := "attempt"
+			if remaining != 1 {
+				attemptLabel = "attempts"
+			}
+			s.setFeedbackLocked(fmt.Sprintf("%s %s remains at %d/%d mastery. %d %s remain on this challenge before the coach loads a new one.", result.Message, s.levelLabel(level), state.MasteryCount, masteryTarget, remaining, attemptLabel), false)
+			snapshot, subscribers := s.snapshotAndSubscribersLocked()
+			s.mu.Unlock()
+			s.actionMu.Unlock()
+			s.broadcast(snapshot, subscribers)
+			app.WriteJSON(w, http.StatusOK, snapshot)
+			return
+		}
+
+		next := s.pickRandomForLevelDifferentVariant(level, current.ID, current.VariantGroup)
+		s.setLevelScenarioLocked(level, next)
+		s.mu.Unlock()
+
+		_, err := s.prepareLevelScenario(r.Context(), level, defaultTraceBatchSize)
+
+		s.mu.Lock()
+		message := fmt.Sprintf("%s %s remains at %d/%d mastery. You used both attempts on this challenge, so the coach loaded a new one.", result.Message, s.levelLabel(level), state.MasteryCount, masteryTarget)
+		if err != nil {
+			message += " The new challenge loaded, but automatic trace generation failed. Refresh or request a new challenge and try again."
+		}
+		s.setFeedbackLocked(message, false)
 		snapshot, subscribers := s.snapshotAndSubscribersLocked()
 		s.mu.Unlock()
 		s.actionMu.Unlock()
@@ -367,20 +386,14 @@ func (s *coachServer) grade(w http.ResponseWriter, r *http.Request) {
 		state.MasteryCount++
 	}
 	masteryCount := state.MasteryCount
-	unlockedLevel := s.unlockNextLevelIfEligibleLocked()
 	next := s.pickRandomForLevel(level, current.ID)
-	state.Current = next
-	state.Prepared = false
-	state.Challenge = nil
+	s.setLevelScenarioLocked(level, next)
 	s.mu.Unlock()
 
 	_, err := s.prepareLevelScenario(r.Context(), level, defaultTraceBatchSize)
 
 	s.mu.Lock()
 	message := fmt.Sprintf("Correct. %s is now at %d/%d mastery.", s.levelLabel(level), masteryCount, masteryTarget)
-	if unlockedLevel > 0 {
-		message += fmt.Sprintf("\n\n%s unlocked and is now selectable.", s.levelLabel(unlockedLevel))
-	}
 	if err != nil {
 		message += "\n\nA fresh challenge was selected, but automatic trace generation failed. Refresh or request a new challenge and try again."
 	}
@@ -555,7 +568,7 @@ const pageTemplate = `
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Trace Coach</title>
-    <meta name="description" content="Level-based trace practice with shared progression, five-attempt mastery gates, and synchronized state across every open coach tab.">
+    <meta name="description" content="Level-based trace practice with self-selected starting points, five-attempt mastery tracking, and synchronized state across every open coach tab.">
     <link rel="icon" href="/favicon.ico">
     <style>
       :root {
@@ -569,7 +582,6 @@ const pageTemplate = `
         --success: #215f3c;
         --success-soft: #dceedd;
         --border: #d3c2ae;
-        --locked: #e7ded0;
       }
       html {
         min-height: 100%;
@@ -595,6 +607,7 @@ const pageTemplate = `
       .stack {
         display: grid;
         gap: 16px;
+        align-content: start;
       }
       .panel {
         background: var(--panel);
@@ -715,10 +728,6 @@ const pageTemplate = `
         color: white;
         border-color: var(--accent-strong);
       }
-      .level-button.locked {
-        background: var(--locked);
-        color: var(--muted);
-      }
       .level-button.mastered:not(.selected) {
         background: #f8eee3;
       }
@@ -745,6 +754,8 @@ const pageTemplate = `
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
+        align-items: center;
+        align-self: start;
       }
       .status-pill {
         padding: 6px 10px;
@@ -851,6 +862,60 @@ const pageTemplate = `
         max-width: 420px;
         text-align: center;
       }
+      .onboarding-overlay {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        background: rgba(31, 33, 32, 0.34);
+        backdrop-filter: blur(3px);
+        z-index: 900;
+      }
+      .onboarding-overlay.hidden {
+        display: none;
+      }
+      .onboarding-modal {
+        width: min(480px, calc(100vw - 40px));
+        padding: 22px;
+      }
+      .onboarding-step {
+        display: grid;
+        gap: 14px;
+        animation: modal-step-in 180ms ease;
+      }
+      .onboarding-step.hidden {
+        display: none;
+      }
+      .skill-options {
+        display: grid;
+        gap: 10px;
+      }
+      .skill-option {
+        width: 100%;
+        display: grid;
+        gap: 4px;
+        text-align: left;
+        background: white;
+        color: var(--ink);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px 14px;
+      }
+      .skill-option:hover:not(:disabled), .skill-option:focus-visible {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(165, 61, 36, 0.14);
+      }
+      .skill-option span {
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.35;
+      }
+      .modal-error {
+        color: var(--accent-strong);
+        margin: 0;
+      }
       .spinner {
         width: 34px;
         height: 34px;
@@ -862,6 +927,16 @@ const pageTemplate = `
       }
       @keyframes spin {
         to { transform: rotate(360deg); }
+      }
+      @keyframes modal-step-in {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
       }
     </style>
   </head>
@@ -943,6 +1018,38 @@ const pageTemplate = `
       </section>
     </main>
 
+    <div id="skill-modal" class="onboarding-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="skill-modal-title">
+      <div class="panel onboarding-modal">
+        <div id="skill-step-choice" class="onboarding-step">
+          <div class="eyebrow">Start Point</div>
+          <h2 id="skill-modal-title">How familiar are you with distributed tracing?</h2>
+          <div class="skill-options">
+            <button class="skill-option" type="button" data-skill-choice="no-experience" data-level="1">
+              <strong>No experience</strong>
+              <span>Start with reading one trace and finding the slow span.</span>
+            </button>
+            <button class="skill-option" type="button" data-skill-choice="familiar" data-level="3">
+              <strong>Familiar</strong>
+              <span>Start with before-and-after trace comparisons.</span>
+            </button>
+            <button class="skill-option" type="button" data-skill-choice="expert" data-level="5">
+              <strong>Expert</strong>
+              <span>Start with intermittent failures and noisy evidence.</span>
+            </button>
+          </div>
+          <p id="skill-modal-error" class="modal-error hidden"></p>
+        </div>
+        <div id="skill-step-explainer" class="onboarding-step hidden">
+          <div class="eyebrow">Flexible Practice</div>
+          <h2>Move between levels any time</h2>
+          <p class="muted">All levels are available from the progression bar at the top. If the starting point feels too easy or too hard, choose a different level or revisit a specific skill whenever you want more practice.</p>
+          <div class="actions">
+            <button id="skill-modal-close" type="button">Start Practicing</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="busy-overlay" class="hidden" aria-live="polite" aria-busy="true">
       <div class="panel modal">
         <div class="spinner" aria-hidden="true"></div>
@@ -953,6 +1060,7 @@ const pageTemplate = `
     <script>
       const initialState = {{.InitialState}};
       const minimumSubmitBusyMs = 700;
+      const skillPlacementKey = "cloudtracing.skillPlacement.v1";
       const mobileProgressionQuery = window.matchMedia("(max-width: 840px)");
       let coachState = initialState;
       let hintLevel = 0;
@@ -1070,7 +1178,7 @@ const pageTemplate = `
           element.disabled = disabled;
         });
         document.querySelectorAll(".level-button").forEach((button) => {
-          button.disabled = disabled || button.dataset.unlocked !== "true";
+          button.disabled = disabled;
         });
       }
 
@@ -1094,29 +1202,87 @@ const pageTemplate = `
           const button = document.createElement("button");
           button.type = "button";
           button.className = "level-button";
-          button.dataset.unlocked = String(level.unlocked);
+          button.dataset.unlocked = "true";
           if (level.selected) {
             button.classList.add("selected");
-          }
-          if (!level.unlocked) {
-            button.classList.add("locked");
           }
           if (level.mastered) {
             button.classList.add("mastered");
           }
-          button.disabled = !level.unlocked;
           button.innerHTML =
             "<div class=\"level-topline\">" +
               "<strong>" + level.title + "</strong>" +
-              "<span class=\"level-state\">" + (level.unlocked ? (level.mastered ? "Mastered" : "Open") : "Locked") + "</span>" +
+              "<span class=\"level-state\">" + (level.mastered ? "Mastered" : "Open") + "</span>" +
             "</div>" +
             "<div class=\"level-summary\">" + level.summary + "</div>" +
             "<div class=\"level-progress\">" + level.mastery_count + "/" + level.mastery_target + " correct</div>";
-          if (level.unlocked) {
-            button.addEventListener("click", () => selectLevel(level.number));
-          }
+          button.addEventListener("click", () => selectLevel(level.number));
           root.appendChild(button);
         });
+      }
+
+      function hasSeenSkillPlacement() {
+        try {
+          return window.localStorage.getItem(skillPlacementKey) === "done";
+        } catch (error) {
+          return false;
+        }
+      }
+
+      function markSkillPlacementSeen() {
+        try {
+          window.localStorage.setItem(skillPlacementKey, "done");
+        } catch (error) {
+        }
+      }
+
+      function setSkillModalVisible(visible) {
+        document.getElementById("skill-modal").classList.toggle("hidden", !visible);
+      }
+
+      function showSkillExplanation() {
+        document.getElementById("skill-step-choice").classList.add("hidden");
+        document.getElementById("skill-step-explainer").classList.remove("hidden");
+        document.getElementById("skill-modal-close").focus();
+      }
+
+      function setSkillChoiceDisabled(disabled) {
+        document.querySelectorAll("[data-skill-choice]").forEach((button) => {
+          button.disabled = disabled;
+        });
+      }
+
+      async function chooseSkillPlacement(event) {
+        const button = event.currentTarget;
+        const level = Number(button.dataset.level);
+        const error = document.getElementById("skill-modal-error");
+        error.textContent = "";
+        error.classList.add("hidden");
+        setSkillChoiceDisabled(true);
+
+        try {
+          await requestSnapshot("/api/levels/select", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({level})
+          });
+          markSkillPlacementSeen();
+          showSkillExplanation();
+        } catch (failure) {
+          error.textContent = "Could not set your starting level. Try again.";
+          error.classList.remove("hidden");
+          setSkillChoiceDisabled(false);
+        }
+      }
+
+      function closeSkillPlacement() {
+        setSkillModalVisible(false);
+      }
+
+      function maybeShowSkillPlacement() {
+        if (!hasSeenSkillPlacement()) {
+          setSkillModalVisible(true);
+        }
       }
 
       function renderReferenceTrace(assessment) {
@@ -1169,7 +1335,7 @@ const pageTemplate = `
             shell.textContent = "Open the trace links below, pick the slow ones, and choose the one healthy trace.";
             break;
           case "before_after":
-            shell.textContent = "Pick one before trace and one slow after trace from the lists below.";
+            shell.textContent = "Pick one baseline trace and one slow trace from the shared candidate list below.";
             break;
           case "intermittent_failure":
             shell.textContent = "Open the trace links below and select the failing ones.";
@@ -1366,8 +1532,8 @@ const pageTemplate = `
             restoreCheckedValues("healthy-trace", previousState.healthyTraceID ? [previousState.healthyTraceID] : []);
             break;
           case "before_after":
-            appendSelect(shell, "before-trace", "Before trace", assessment.before_trace_choices, "Select a baseline trace");
-            appendSelect(shell, "after-trace", "After trace", assessment.after_trace_choices, "Select a slow trace");
+            appendSelect(shell, "before-trace", "Before trace", assessment.trace_choices, "Select a baseline trace");
+            appendSelect(shell, "after-trace", "After trace", assessment.trace_choices, "Select a slow trace");
             restoreSelectValue("before-trace", previousState.beforeTraceID);
             restoreSelectValue("after-trace", previousState.afterTraceID);
             break;
@@ -1461,6 +1627,9 @@ const pageTemplate = `
           case "before_after":
             if (!payload.before_trace_id) {
               return "Select a before trace before submitting.";
+            }
+            if (payload.before_trace_id === payload.after_trace_id) {
+              return "Select two different traces before submitting.";
             }
             return payload.after_trace_id ? "" : "Select an after trace before submitting.";
           case "span_attribute":
@@ -1619,6 +1788,10 @@ const pageTemplate = `
       document.getElementById("next-challenge").addEventListener("click", nextChallenge);
       document.getElementById("hint").addEventListener("click", showHint);
       document.getElementById("submit").addEventListener("click", submit);
+      document.querySelectorAll("[data-skill-choice]").forEach((button) => {
+        button.addEventListener("click", chooseSkillPlacement);
+      });
+      document.getElementById("skill-modal-close").addEventListener("click", closeSkillPlacement);
       document.getElementById("service").addEventListener("change", () => {
         const type = currentAssessment().type;
         if (type === "culprit_span" || type === "span_attribute") {
@@ -1640,6 +1813,7 @@ const pageTemplate = `
       syncLevelsCollapsed();
       render();
       connectEvents();
+      maybeShowSkillPlacement();
     </script>
   </body>
 </html>

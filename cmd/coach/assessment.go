@@ -71,8 +71,6 @@ type publicAssessment struct {
 	TraceChoices         []publicTraceOption                `json:"trace_choices,omitempty"`
 	FaultyTraceChoices   []publicTraceOption                `json:"faulty_trace_choices,omitempty"`
 	HealthyTraceChoices  []publicTraceOption                `json:"healthy_trace_choices,omitempty"`
-	BeforeTraceChoices   []publicTraceOption                `json:"before_trace_choices,omitempty"`
-	AfterTraceChoices    []publicTraceOption                `json:"after_trace_choices,omitempty"`
 	FailingTraceChoices  []publicTraceOption                `json:"failing_trace_choices,omitempty"`
 	TraceSpanChoices     map[string][]publicSpanOption      `json:"trace_span_choices,omitempty"`
 	SpanChoices          []publicSpanOption                 `json:"span_choices,omitempty"`
@@ -322,9 +320,11 @@ func buildPreparedChallenge(def scenario.Definition, groups traceGroups, traceUR
 		if len(groups.Before) == 0 || len(groups.After) == 0 {
 			return nil, fmt.Errorf("before/after trace set incomplete for %s", def.ID)
 		}
+		choices := append([]traceRecord{}, groups.Before...)
+		choices = append(choices, groups.After...)
+		sortTraceRecords(choices)
 		public.Ready = true
-		public.BeforeTraceChoices = traceOptions(groups.Before, traceURL)
-		public.AfterTraceChoices = traceOptions(groups.After, traceURL)
+		public.TraceChoices = traceOptions(choices, traceURL)
 		return &preparedChallenge{
 			Public:                 public,
 			ExpectedBeforeTraceIDs: traceIDs(groups.Before),

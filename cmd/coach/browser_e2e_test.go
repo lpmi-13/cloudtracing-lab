@@ -21,9 +21,11 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
+const skillPlacementStorageKey = "cloudtracing.skillPlacement.v1"
+
 func TestCoachBrowserAssessmentModes(t *testing.T) {
 	t.Run("level_1_trace_search_span", func(t *testing.T) {
-		h := newCoachE2EHarness(t, coachSessionSetup{SelectedLevel: 1, UnlockedThrough: 1})
+		h := newCoachE2EHarness(t, coachSessionSetup{SelectedLevel: 1})
 		tab, closeTab := newBrowserRoot(t)
 		defer closeTab()
 
@@ -43,7 +45,7 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 	})
 
 	t.Run("level_2_healthy_faulty", func(t *testing.T) {
-		h := newCoachE2EHarness(t, coachSessionSetup{SelectedLevel: 2, UnlockedThrough: 2, MasteryCounts: map[int]int{1: masteryTarget}})
+		h := newCoachE2EHarness(t, coachSessionSetup{SelectedLevel: 2, MasteryCounts: map[int]int{1: masteryTarget}})
 		tab, closeTab := newBrowserRoot(t)
 		defer closeTab()
 
@@ -65,9 +67,8 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 
 	t.Run("level_3_before_after", func(t *testing.T) {
 		h := newCoachE2EHarness(t, coachSessionSetup{
-			SelectedLevel:   3,
-			UnlockedThrough: 3,
-			MasteryCounts:   map[int]int{1: masteryTarget, 2: masteryTarget},
+			SelectedLevel: 3,
+			MasteryCounts: map[int]int{1: masteryTarget, 2: masteryTarget},
 		})
 		tab, closeTab := newBrowserRoot(t)
 		defer closeTab()
@@ -90,9 +91,8 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 
 	t.Run("level_4_span_attribute", func(t *testing.T) {
 		h := newCoachE2EHarness(t, coachSessionSetup{
-			SelectedLevel:   4,
-			UnlockedThrough: 4,
-			MasteryCounts:   map[int]int{1: masteryTarget, 2: masteryTarget, 3: masteryTarget},
+			SelectedLevel: 4,
+			MasteryCounts: map[int]int{1: masteryTarget, 2: masteryTarget, 3: masteryTarget},
 		})
 		tab, closeTab := newBrowserRoot(t)
 		defer closeTab()
@@ -116,9 +116,8 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 
 	t.Run("level_5_intermittent_failure", func(t *testing.T) {
 		h := newCoachE2EHarness(t, coachSessionSetup{
-			SelectedLevel:   5,
-			UnlockedThrough: 5,
-			MasteryCounts:   map[int]int{1: masteryTarget, 2: masteryTarget, 3: masteryTarget, 4: masteryTarget},
+			SelectedLevel: 5,
+			MasteryCounts: map[int]int{1: masteryTarget, 2: masteryTarget, 3: masteryTarget, 4: masteryTarget},
 		})
 		tab, closeTab := newBrowserRoot(t)
 		defer closeTab()
@@ -139,6 +138,33 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 	})
 }
 
+func TestCoachBrowserSkillPlacementModal(t *testing.T) {
+	h := newCoachE2EHarness(t, coachSessionSetup{})
+	tab, closeTab := newBrowserRoot(t)
+	defer closeTab()
+
+	runChromedp(t, tab,
+		chromedp.Navigate(h.coach.URL),
+		chromedp.WaitVisible("#title", chromedp.ByID),
+	)
+	waitForCondition(t, tab, `document.getElementById("title").textContent.trim().length > 0`)
+	waitForCondition(t, tab, `document.getElementById("busy-overlay").classList.contains("hidden")`)
+	waitForCondition(t, tab, `!document.getElementById("skill-modal").classList.contains("hidden")`)
+	waitForCondition(t, tab, `document.getElementById("skill-modal-title").textContent.includes("distributed tracing")`)
+
+	click(t, tab, `[data-skill-choice="familiar"]`)
+	waitForSelectedLevel(t, tab, 3)
+	waitForCondition(t, tab, `!document.getElementById("skill-step-explainer").classList.contains("hidden")`)
+	waitForCondition(t, tab, `document.getElementById("skill-step-explainer").textContent.includes("Move between levels any time")`)
+
+	click(t, tab, "#skill-modal-close")
+	waitForCondition(t, tab, `document.getElementById("skill-modal").classList.contains("hidden")`)
+
+	reloadPage(t, tab)
+	waitForSelectedLevel(t, tab, 3)
+	waitForCondition(t, tab, `document.getElementById("skill-modal").classList.contains("hidden")`)
+}
+
 func TestCoachBrowserSharedStateAndProgression(t *testing.T) {
 	h := newCoachE2EHarness(t, coachSessionSetup{})
 
@@ -156,15 +182,13 @@ func TestCoachBrowserSharedStateAndProgression(t *testing.T) {
 	waitForLevelUI(t, tabA, assessmentTraceSearchSpan)
 	waitForLevelUI(t, tabB, assessmentTraceSearchSpan)
 	waitForLevelUI(t, tabC, assessmentTraceSearchSpan)
+	waitForCondition(t, tabA, levelUnlockedExpression(2, true))
+	waitForCondition(t, tabA, levelUnlockedExpression(5, true))
 
 	for attempt := 1; attempt <= masteryTarget; attempt++ {
-		if attempt == masteryTarget {
-			waitForCondition(t, tabA, levelUnlockedExpression(2, false))
-		}
-
 		titleBefore := textContent(t, tabA, "#title")
 		solveSelectedLevel(t, h, tabA)
-		waitForCondition(t, tabA, fmt.Sprintf(`document.querySelectorAll("#levels .level-button")[1].dataset.unlocked === %q`, boolString(attempt == masteryTarget)))
+		waitForCondition(t, tabA, levelUnlockedExpression(2, true))
 		waitForProgress(t, tabA, fmt.Sprintf("%d/%d correct", attempt, masteryTarget))
 		if attempt < masteryTarget {
 			waitForCondition(t, tabA, fmt.Sprintf(`document.getElementById("title").textContent.trim() !== %q`, titleBefore))
@@ -174,7 +198,7 @@ func TestCoachBrowserSharedStateAndProgression(t *testing.T) {
 	}
 
 	waitForCondition(t, tabA, levelUnlockedExpression(2, true))
-	waitForCondition(t, tabA, levelUnlockedExpression(3, false))
+	waitForCondition(t, tabA, levelUnlockedExpression(3, true))
 
 	click(t, tabA, "#levels .level-button:nth-child(2)")
 	waitForSelectedLevel(t, tabA, 2)
@@ -215,9 +239,8 @@ func TestCoachBrowserSharedStateAndProgression(t *testing.T) {
 
 func TestCoachBrowserRestartReset(t *testing.T) {
 	h := newCoachE2EHarness(t, coachSessionSetup{
-		SelectedLevel:   2,
-		UnlockedThrough: 2,
-		MasteryCounts:   map[int]int{1: masteryTarget, 2: 2},
+		SelectedLevel: 2,
+		MasteryCounts: map[int]int{1: masteryTarget, 2: 2},
 	})
 
 	tabA, closeA := newBrowserRoot(t)
@@ -245,7 +268,7 @@ func TestCoachBrowserRestartReset(t *testing.T) {
 	waitForSelectedLevel(t, tabB, 1)
 	waitForSelectedLevel(t, tabC, 1)
 	waitForProgress(t, tabA, "0/5 correct")
-	waitForCondition(t, tabA, levelUnlockedExpression(2, false))
+	waitForCondition(t, tabA, levelUnlockedExpression(2, true))
 
 	solveSelectedLevel(t, h, tabA)
 	waitForProgress(t, tabB, "1/5 correct")
@@ -253,9 +276,8 @@ func TestCoachBrowserRestartReset(t *testing.T) {
 }
 
 type coachSessionSetup struct {
-	SelectedLevel   int
-	UnlockedThrough int
-	MasteryCounts   map[int]int
+	SelectedLevel int
+	MasteryCounts map[int]int
 }
 
 type seededTrafficRequest struct {
@@ -356,12 +378,6 @@ func (h *coachE2EHarness) restart(t *testing.T, setup coachSessionSetup) {
 	if setup.SelectedLevel <= 0 {
 		setup.SelectedLevel = 1
 	}
-	if setup.UnlockedThrough < setup.SelectedLevel {
-		setup.UnlockedThrough = setup.SelectedLevel
-	}
-	if setup.UnlockedThrough <= 0 {
-		setup.UnlockedThrough = 1
-	}
 
 	levels, err := buildLevels(h.defs)
 	if err != nil {
@@ -386,7 +402,6 @@ func (h *coachE2EHarness) restart(t *testing.T, setup coachSessionSetup) {
 	server.state.SelectedLevel = setup.SelectedLevel
 	for _, level := range levels {
 		state := server.state.Levels[level.Number]
-		state.Unlocked = level.Number <= setup.UnlockedThrough
 		state.Current = level.Scenarios[0]
 		if mastery, ok := setup.MasteryCounts[level.Number]; ok {
 			state.MasteryCount = mastery
@@ -586,6 +601,7 @@ func newBrowserRoot(t *testing.T) (context.Context, func()) {
 		chromedp.Flag("disable-breakpad", true),
 		chromedp.Flag("no-first-run", true),
 		chromedp.Flag("no-default-browser-check", true),
+		chromedp.WindowSize(1440, 900),
 	)
 
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), allocatorOptions...)
@@ -626,8 +642,23 @@ func navigateCoach(t *testing.T, ctx context.Context, url string) {
 		chromedp.Navigate(url),
 		chromedp.WaitVisible("#title", chromedp.ByID),
 	)
+	hideSkillPlacementModalForTest(t, ctx)
 	waitForCondition(t, ctx, `document.getElementById("title").textContent.trim().length > 0`)
 	waitForCondition(t, ctx, `document.getElementById("busy-overlay").classList.contains("hidden")`)
+}
+
+func hideSkillPlacementModalForTest(t *testing.T, ctx context.Context) {
+	t.Helper()
+
+	var ok bool
+	runChromedp(t, ctx, chromedp.Evaluate(fmt.Sprintf(`(() => {
+		window.localStorage.setItem(%q, "done");
+		const modal = document.getElementById("skill-modal");
+		if (modal) {
+			modal.classList.add("hidden");
+		}
+		return true;
+	})()`, skillPlacementStorageKey), &ok))
 }
 
 func reloadPage(t *testing.T, ctx context.Context) {
@@ -754,8 +785,7 @@ func waitForLevelUI(t *testing.T, ctx context.Context, assessmentType string) {
 		waitForCondition(t, ctx, `document.querySelector("#before-trace") !== null`)
 		waitForCondition(t, ctx, `document.querySelector("#after-trace") !== null`)
 	case assessmentSpanAttribute:
-		waitForCondition(t, ctx, `document.querySelector("#selected-span") !== null`)
-		waitForCondition(t, ctx, `document.querySelector("#selected-attribute") !== null`)
+		waitForCondition(t, ctx, `!document.getElementById("service-field").classList.contains("hidden")`)
 	case assessmentIntermittent:
 		waitForCondition(t, ctx, `document.querySelectorAll('input[name="failing-trace"]').length >= 2`)
 	default:

@@ -6,8 +6,11 @@ ARG JAEGER_UI_GIT_TAG=main
 ARG JAEGER_UI_COMMIT_SHA=386ab954c710199930f3d6cd165833acc1b2088e
 WORKDIR /src
 RUN apk add --no-cache git
-RUN git clone --depth 1 --branch "${JAEGER_UI_GIT_TAG}" https://github.com/jaegertracing/jaeger-ui.git repo \
+RUN git init repo \
     && cd repo \
+    && git remote add origin https://github.com/jaegertracing/jaeger-ui.git \
+    && git fetch --depth 1 origin "${JAEGER_UI_COMMIT_SHA}" \
+    && git checkout FETCH_HEAD \
     && test "$(git rev-parse HEAD)" = "${JAEGER_UI_COMMIT_SHA}"
 
 FROM ${NODE_IMAGE} AS build
