@@ -54,6 +54,7 @@ type coachSnapshot struct {
 	Feedback        string         `json:"feedback"`
 	FeedbackOK      bool           `json:"feedback_ok"`
 	HasFeedback     bool           `json:"has_feedback"`
+	JaegerUIURL     string         `json:"jaeger_ui_url"`
 	SelectedLevel   int            `json:"selected_level"`
 	MasteryTarget   int            `json:"mastery_target"`
 }
@@ -291,6 +292,7 @@ func (s *coachServer) snapshotLocked() coachSnapshot {
 		Feedback:        s.state.Feedback,
 		FeedbackOK:      s.state.FeedbackOK,
 		HasFeedback:     s.state.HasFeedback,
+		JaegerUIURL:     s.jaegerUIURL,
 		SelectedLevel:   s.state.SelectedLevel,
 		MasteryTarget:   masteryTarget,
 	}

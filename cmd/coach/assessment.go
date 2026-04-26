@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"hash/fnv"
 	"sort"
 	"strings"
 	"time"
@@ -118,7 +119,7 @@ func requiredEvidenceFor(def scenario.Definition) []string {
 	switch def.AssessmentType {
 	case assessmentTraceSearchSpan:
 		return []string{
-			"Select the trace you inspected from the prepared search results.",
+			"Select the slow trace you inspected from the prepared search results.",
 			"Select the culprit span inside that trace.",
 		}
 	case assessmentCulpritSpan:
@@ -165,7 +166,7 @@ func requiredEvidenceFor(def scenario.Definition) []string {
 func passConditionFor(def scenario.Definition) string {
 	switch def.AssessmentType {
 	case assessmentTraceSearchSpan:
-		return "Full credit requires a valid trace from the prepared search and the correct culprit span from that trace."
+		return "Full credit requires the intended slow trace from the prepared search and the correct culprit span from that trace."
 	case assessmentCulpritSpan:
 		return "Full credit requires the correct service, issue, and culprit span from the reference trace."
 	case assessmentHealthyFaulty:
@@ -208,6 +209,19 @@ func normalizeBatchPlan(def scenario.Definition, fallbackCount int) scenario.Bat
 	}
 
 	switch def.AssessmentType {
+	case assessmentTraceSearchSpan:
+		if plan.FaultyCount <= 0 {
+			plan.FaultyCount = 1
+		}
+		if plan.HealthyCount <= 0 {
+			if plan.CandidateCount > plan.FaultyCount {
+				plan.HealthyCount = plan.CandidateCount - plan.FaultyCount
+			} else if plan.BackgroundCount > 0 {
+				plan.HealthyCount = plan.BackgroundCount
+			} else {
+				plan.HealthyCount = 3
+			}
+		}
 	case assessmentCulpritSpan:
 		if plan.FaultyCount <= 0 {
 			plan.FaultyCount = max(2, fallbackCount-1)
@@ -257,11 +271,14 @@ func buildPreparedChallenge(def scenario.Definition, groups traceGroups, traceUR
 			return nil, fmt.Errorf("no faulty traces available for %s", def.ID)
 		}
 		choices := append([]traceRecord{}, groups.Faulty...)
+		choices = append(choices, groups.Healthy...)
 		sortTraceRecords(choices)
 
-		traceSpanChoices := make(map[string][]publicSpanOption, len(choices))
-		for _, trace := range choices {
-			traceSpanChoices[trace.ID] = spanChoicesForTrace(def, trace)
+		expectedTraceIDs := traceIDs(groups.Faulty)
+		expectedSpanID := spanChoiceID(def.ExpectedService, def.AnswerKey.SpanOperation)
+		traceSpanChoices, err := traceSearchSpanChoices(def, choices, expectedTraceIDs, expectedSpanID)
+		if err != nil {
+			return nil, err
 		}
 
 		searchTags := map[string]string{}
@@ -275,8 +292,8 @@ func buildPreparedChallenge(def scenario.Definition, groups traceGroups, traceUR
 		public.TraceSpanChoices = traceSpanChoices
 		return &preparedChallenge{
 			Public:           public,
-			ExpectedTraceIDs: traceIDs(choices),
-			ExpectedSpanID:   spanChoiceID(def.ExpectedService, def.AnswerKey.SpanOperation),
+			ExpectedTraceIDs: expectedTraceIDs,
+			ExpectedSpanID:   expectedSpanID,
 		}, nil
 
 	case assessmentCulpritSpan:
@@ -412,7 +429,7 @@ func gradeSubmission(def scenario.Definition, challenge *preparedChallenge, req 
 		if traceOK && spanOK {
 			return gradeResult{
 				Pass:    true,
-				Message: "Correct. You chose a valid trace from the prepared search and isolated the culprit span.",
+				Message: "Correct. You chose the intended slow trace from the prepared search and isolated the culprit span.",
 			}
 		}
 		return gradeResult{Pass: false, Message: traceSearchSpanFeedback(traceOK, spanOK)}
@@ -481,7 +498,7 @@ func gradeSubmission(def scenario.Definition, challenge *preparedChallenge, req 
 func traceSearchSpanFeedback(traceOK, spanOK bool) string {
 	switch {
 	case !traceOK && spanOK:
-		return "The culprit span is right, but the trace choice is wrong. Reopen the prepared search and choose one of the intended traces."
+		return "The culprit span is right, but the trace choice is wrong. Reopen the prepared search and choose the intended slow trace."
 	case traceOK && !spanOK:
 		return "The trace choice is right, but the span evidence is wrong. Reopen that trace and identify the specific slow span."
 	default:
@@ -612,6 +629,79 @@ func spanChoicesForTrace(def scenario.Definition, trace traceRecord) []publicSpa
 	return choices
 }
 
+func traceSearchSpanChoices(def scenario.Definition, traces []traceRecord, expectedTraceIDs []string, expectedSpanID string) (map[string][]publicSpanOption, error) {
+	traceSpanChoices := make(map[string][]publicSpanOption, len(traces))
+	expectedTraceSet := make(map[string]struct{}, len(expectedTraceIDs))
+	minChoices := 0
+
+	for _, traceID := range expectedTraceIDs {
+		expectedTraceSet[traceID] = struct{}{}
+	}
+
+	for _, trace := range traces {
+		choices := spanChoicesForTrace(def, trace)
+		if len(choices) == 0 {
+			return nil, fmt.Errorf("trace %s does not expose span choices for %s", trace.ID, def.ID)
+		}
+		if _, ok := expectedTraceSet[trace.ID]; ok && !containsSpanChoice(choices, expectedSpanID) {
+			return nil, fmt.Errorf("trace %s does not include expected span %q", trace.ID, expectedSpanID)
+		}
+		traceSpanChoices[trace.ID] = choices
+		if minChoices == 0 || len(choices) < minChoices {
+			minChoices = len(choices)
+		}
+	}
+
+	for _, trace := range traces {
+		requiredID := ""
+		if _, ok := expectedTraceSet[trace.ID]; ok {
+			requiredID = expectedSpanID
+		}
+		traceSpanChoices[trace.ID] = rotateSpanChoices(trimSpanChoices(traceSpanChoices[trace.ID], minChoices, requiredID), trace.ID)
+	}
+
+	return traceSpanChoices, nil
+}
+
+func trimSpanChoices(options []publicSpanOption, limit int, requiredID string) []publicSpanOption {
+	if limit <= 0 || len(options) <= limit {
+		return append([]publicSpanOption{}, options...)
+	}
+
+	trimmed := append([]publicSpanOption{}, options[:limit]...)
+	if requiredID != "" && !containsSpanChoice(trimmed, requiredID) {
+		if required, ok := findSpanChoice(options, requiredID); ok {
+			trimmed[len(trimmed)-1] = required
+			sort.Slice(trimmed, func(i, j int) bool {
+				return trimmed[i].Label < trimmed[j].Label
+			})
+		}
+	}
+	return trimmed
+}
+
+func findSpanChoice(options []publicSpanOption, id string) (publicSpanOption, bool) {
+	for _, option := range options {
+		if option.ID == id {
+			return option, true
+		}
+	}
+	return publicSpanOption{}, false
+}
+
+func rotateSpanChoices(options []publicSpanOption, seed string) []publicSpanOption {
+	rotated := append([]publicSpanOption{}, options...)
+	if len(rotated) <= 1 {
+		return rotated
+	}
+
+	offset := stableChoiceOffset(seed, len(rotated))
+	if offset == 0 {
+		return rotated
+	}
+	return append(rotated[offset:], rotated[:offset]...)
+}
+
 func attributeChoicesBySpanForTrace(trace traceRecord) map[string][]publicAttributeOption {
 	options := make(map[string][]publicAttributeOption, len(trace.Spans))
 
@@ -692,14 +782,23 @@ func traceAttributeValue(record traceRecord, key string) string {
 }
 
 func traceLabel(record traceRecord) string {
-	return fmt.Sprintf("trace %s at %s", shortID(record.ID), record.Start.Local().Format("15:04:05"))
+	return fmt.Sprintf("trace %s at %s", traceDisplayID(record.ID), record.Start.Local().Format("15:04:05"))
 }
 
-func shortID(id string) string {
-	if len(id) <= 8 {
+func traceDisplayID(id string) string {
+	if len(id) <= 7 {
 		return id
 	}
-	return id[len(id)-8:]
+	return id[:7]
+}
+
+func stableChoiceOffset(seed string, size int) int {
+	if size <= 1 || seed == "" {
+		return 0
+	}
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(seed))
+	return int(hash.Sum32() % uint32(size))
 }
 
 func spanChoiceID(service, operation string) string {

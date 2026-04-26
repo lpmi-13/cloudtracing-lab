@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -33,15 +32,26 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 		waitForLevelUI(t, tab, assessmentTraceSearchSpan)
 		waitForReferenceTraceLink(t, tab)
 		assertAssessmentContract(t, tab)
+		waitForCondition(t, tab, `document.getElementById("objective").textContent.trim() === "Find the slow trace and span."`)
+		waitForCondition(t, tab, `document.getElementById("open-jaeger").classList.contains("hidden")`)
+		waitForCondition(t, tab, `document.getElementById("assessment-prompt").classList.contains("hidden")`)
 
 		answer := h.waitForSelectedAnswer(t)
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "Select the trace you inspected before submitting.")
+		waitForFeedbackContains(t, tab, "Select the slow trace you inspected before submitting.")
 
 		setSelectValue(t, tab, "#selected-trace", answer.SelectedTraceID, false)
 		setSelectValue(t, tab, "#selected-span", wrongSelectOptionValue(t, tab, "#selected-span", answer.SpanID), false)
 		click(t, tab, "#submit")
 		waitForFeedbackContains(t, tab, "span evidence is wrong")
+
+		if answer.InvalidTraceID == "" {
+			t.Fatal("expected a distractor trace for level 1")
+		}
+		setSelectValue(t, tab, "#selected-trace", answer.InvalidTraceID, false)
+		setSelectValue(t, tab, "#selected-span", answer.SpanID, false)
+		click(t, tab, "#submit")
+		waitForFeedbackContains(t, tab, "trace choice is wrong")
 	})
 
 	t.Run("level_2_healthy_faulty", func(t *testing.T) {
@@ -57,12 +67,13 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 		setSelectValue(t, tab, "#service", answer.Service, false)
 		setSelectValue(t, tab, "#issue", answer.Issue, false)
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "Select every slow trace before submitting.")
+		waitForFeedbackContains(t, tab, "Classify every trace before submitting.")
 
-		setChecked(t, tab, "faulty-trace", answer.FaultyTraceIDs[0], true)
-		setChecked(t, tab, "healthy-trace", answer.HealthyTraceID, true)
+		setTraceRole(t, tab, answer.FaultyTraceIDs[0], "slow")
+		setTraceRole(t, tab, answer.FaultyTraceIDs[1], "healthy")
+		setTraceRole(t, tab, answer.HealthyTraceID, "slow")
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "slow trace set is wrong")
+		waitForFeedbackContains(t, tab, "trace grouping is wrong")
 	})
 
 	t.Run("level_3_before_after", func(t *testing.T) {
@@ -221,7 +232,7 @@ func TestCoachBrowserSharedStateAndProgression(t *testing.T) {
 	answer := h.waitForSelectedAnswer(t)
 	setSelectValue(t, tabA, "#service", answer.Service, false)
 	setSelectValue(t, tabA, "#issue", answer.Issue, false)
-	setChecked(t, tabA, "faulty-trace", answer.FaultyTraceIDs[0], true)
+	setTraceRole(t, tabA, answer.FaultyTraceIDs[0], "slow")
 	click(t, tabA, "#next-challenge")
 
 	waitForCondition(t, tabA, fmt.Sprintf(`document.getElementById("title").textContent.trim() !== %q`, titleBefore))
@@ -229,9 +240,9 @@ func TestCoachBrowserSharedStateAndProgression(t *testing.T) {
 	waitForCondition(t, tabC, fmt.Sprintf(`document.getElementById("title").textContent.trim() === %q`, textContent(t, tabA, "#title")))
 	waitForInputValue(t, tabA, "#service", "")
 	waitForInputValue(t, tabA, "#issue", "")
-	waitForCheckedCount(t, tabA, `input[name="faulty-trace"]:checked`, 0)
-	waitForCheckedCount(t, tabB, `input[name="faulty-trace"]:checked`, 0)
-	waitForCheckedCount(t, tabC, `input[name="faulty-trace"]:checked`, 0)
+	waitForCondition(t, tabA, `document.querySelectorAll('select[data-trace-role]').length === 0 || [...document.querySelectorAll('select[data-trace-role]')].every((select) => !select.value)`)
+	waitForCondition(t, tabB, `document.querySelectorAll('select[data-trace-role]').length === 0 || [...document.querySelectorAll('select[data-trace-role]')].every((select) => !select.value)`)
+	waitForCondition(t, tabC, `document.querySelectorAll('select[data-trace-role]').length === 0 || [...document.querySelectorAll('select[data-trace-role]')].every((select) => !select.value)`)
 	waitForFeedbackHidden(t, tabA)
 	waitForFeedbackHidden(t, tabB)
 	waitForFeedbackHidden(t, tabC)
@@ -293,6 +304,7 @@ type expectedAnswer struct {
 	Service         string
 	Issue           string
 	SelectedTraceID string
+	InvalidTraceID  string
 	SpanID          string
 	AttributeID     string
 	FaultyTraceIDs  []string
@@ -393,7 +405,6 @@ func (h *coachE2EHarness) restart(t *testing.T, setup coachSessionSetup) {
 		scenarios:           h.defsByID,
 		scenarioSet:         h.defs,
 		levels:              levels,
-		page:                template.Must(template.New("page").Parse(pageTemplate)),
 		findRecentTraces:    h.findRecentTraces,
 		state:               newLearnerSession(levels),
 		subscribers:         map[int]chan coachSnapshot{},
@@ -567,6 +578,12 @@ func (h *coachE2EHarness) selectedAnswer() (expectedAnswer, bool) {
 	}
 	if len(state.Challenge.ExpectedTraceIDs) > 0 {
 		answer.SelectedTraceID = state.Challenge.ExpectedTraceIDs[0]
+	}
+	for _, choice := range state.Challenge.Public.TraceChoices {
+		if !containsID(state.Challenge.ExpectedTraceIDs, choice.ID) {
+			answer.InvalidTraceID = choice.ID
+			break
+		}
 	}
 	answer.FaultyTraceIDs = append(answer.FaultyTraceIDs, state.Challenge.ExpectedFaultyTraceIDs...)
 	answer.FailingTraceIDs = append(answer.FailingTraceIDs, state.Challenge.ExpectedFailingTraceIDs...)
@@ -779,8 +796,7 @@ func waitForLevelUI(t *testing.T, ctx context.Context, assessmentType string) {
 	case assessmentCulpritSpan:
 		waitForCondition(t, ctx, `document.querySelector("#selected-span") !== null`)
 	case assessmentHealthyFaulty:
-		waitForCondition(t, ctx, `document.querySelectorAll('input[name="faulty-trace"]').length >= 2`)
-		waitForCondition(t, ctx, `document.querySelectorAll('input[name="healthy-trace"]').length >= 1`)
+		waitForCondition(t, ctx, `document.querySelectorAll('select[data-trace-role]').length >= 3`)
 	case assessmentBeforeAfter:
 		waitForCondition(t, ctx, `document.querySelector("#before-trace") !== null`)
 		waitForCondition(t, ctx, `document.querySelector("#after-trace") !== null`)
@@ -802,7 +818,7 @@ func assertAssessmentContract(t *testing.T, ctx context.Context) {
 	t.Helper()
 
 	waitForCondition(t, ctx, `document.getElementById("objective").textContent.trim().length > 0`)
-	waitForCondition(t, ctx, `document.getElementById("assessment-prompt").textContent.trim().length > 0`)
+	waitForCondition(t, ctx, `document.getElementById("assessment-prompt").classList.contains("hidden") || document.getElementById("assessment-prompt").textContent.trim().length > 0`)
 	waitForCondition(t, ctx, `document.getElementById("reference-trace").textContent.trim().length > 0`)
 }
 
@@ -832,6 +848,11 @@ func waitForInputValue(t *testing.T, ctx context.Context, selector, value string
 		const element = document.querySelector(%q);
 		return element && element.value === %q;
 	})()`, selector, value))
+}
+
+func setTraceRole(t *testing.T, ctx context.Context, traceID, role string) {
+	t.Helper()
+	setSelectValue(t, ctx, fmt.Sprintf(`select[data-trace-role="%s"]`, traceID), role, false)
 }
 
 func waitForCheckedCount(t *testing.T, ctx context.Context, selector string, want int) {
@@ -870,9 +891,9 @@ func solveSelectedLevel(t *testing.T, h *coachE2EHarness, ctx context.Context) {
 		setSelectValue(t, ctx, "#selected-span", answer.SpanID, false)
 	case assessmentHealthyFaulty:
 		for _, id := range answer.FaultyTraceIDs {
-			setChecked(t, ctx, "faulty-trace", id, true)
+			setTraceRole(t, ctx, id, "slow")
 		}
-		setChecked(t, ctx, "healthy-trace", answer.HealthyTraceID, true)
+		setTraceRole(t, ctx, answer.HealthyTraceID, "healthy")
 	case assessmentBeforeAfter:
 		setSelectValue(t, ctx, "#before-trace", answer.BeforeTraceID, false)
 		setSelectValue(t, ctx, "#after-trace", answer.AfterTraceID, false)

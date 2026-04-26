@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Trace Coach</title>
+    <meta name="description" content="Level-based trace practice with self-selected starting points, five-attempt mastery tracking, and synchronized state across every open coach tab.">
+    <link rel="icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/app.css">
+  </head>
+  <body>
+    <main class="stack">
+      <section class="panel progression-panel">
+        <div class="progression-topline">
+          <div class="progression-copy">
+            <div class="eyebrow">Progression</div>
+            <strong id="selected-level-title"></strong>
+          </div>
+          <div class="progression-actions">
+            <span id="selected-level-progress" class="status-pill"></span>
+            <button id="toggle-levels" class="ghost-button" type="button" aria-controls="levels-wrap" aria-expanded="true">Hide Levels</button>
+          </div>
+        </div>
+        <div id="levels-wrap" class="progression-body">
+          <div id="levels" class="level-grid"></div>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="panel stack">
+          <div class="challenge-header">
+            <h2 id="title"></h2>
+            <p id="objective" class="muted"></p>
+            <div id="reference-trace" class="reference-trace muted"></div>
+          </div>
+          <div class="actions">
+            <a id="open-jaeger" class="button hidden" target="_blank" rel="noreferrer" href="#">Open Jaeger</a>
+            <button id="next-challenge" type="button">New Challenge</button>
+          </div>
+          <div class="challenge-copy">
+            <p id="assessment-prompt" class="muted"></p>
+          </div>
+          <div id="hint-panel" class="stack">
+            <div class="actions">
+              <button id="hint" type="button">Show Hint</button>
+            </div>
+            <div id="hint-shell" class="hint-shell" aria-hidden="true">
+              <div id="hint-box" class="muted"></div>
+            </div>
+          </div>
+        </article>
+
+        <aside class="panel stack">
+          <div>
+            <h3>Submit Answer</h3>
+            <div id="service-field">
+              <label class="field-label" for="service">Culprit service</label>
+              <select id="service">
+                <option value="">Select service</option>
+                <option value="catalog-api">catalog-api</option>
+                <option value="inventory-api">inventory-api</option>
+                <option value="orders-api">orders-api</option>
+                <option value="payments-api">payments-api</option>
+              </select>
+            </div>
+            <div id="issue-field">
+              <label class="field-label" for="issue">Failure mode</label>
+              <select id="issue">
+                <option value="">Select issue type</option>
+                <option value="expensive_search_query">expensive search query</option>
+                <option value="n_plus_one_queries">n plus one queries</option>
+                <option value="lock_wait_timeout">lock wait timeout</option>
+                <option value="expensive_sort">expensive sort</option>
+              </select>
+            </div>
+            <div id="assessment-fields" class="stack"></div>
+            <div class="actions">
+              <button id="submit" type="button">Check Answer</button>
+            </div>
+          </div>
+          <div id="feedback-panel" class="hidden">
+            <h4>Coach Feedback</h4>
+            <div id="feedback"></div>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <div id="skill-modal" class="onboarding-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="skill-modal-title">
+      <div class="panel onboarding-modal">
+        <div id="skill-step-choice" class="onboarding-step">
+          <div class="eyebrow">Start Point</div>
+          <h2 id="skill-modal-title">How familiar are you with distributed tracing?</h2>
+          <div class="skill-options">
+            <button class="skill-option" type="button" data-skill-choice="no-experience" data-level="1">
+              <strong>No experience</strong>
+              <span>Start with reading one trace and finding the slow span.</span>
+            </button>
+            <button class="skill-option" type="button" data-skill-choice="familiar" data-level="3">
+              <strong>Familiar</strong>
+              <span>Start with before-and-after trace comparisons.</span>
+            </button>
+            <button class="skill-option" type="button" data-skill-choice="expert" data-level="5">
+              <strong>Expert</strong>
+              <span>Start with intermittent failures and noisy evidence.</span>
+            </button>
+          </div>
+          <p id="skill-modal-error" class="modal-error hidden"></p>
+        </div>
+        <div id="skill-step-explainer" class="onboarding-step hidden">
+          <div class="eyebrow">Flexible Practice</div>
+          <h2>Move between levels any time</h2>
+          <p class="muted">All levels are available from the progression bar at the top. If the starting point feels too easy or too hard, choose a different level or revisit a specific skill whenever you want more practice.</p>
+          <div class="actions">
+            <button id="skill-modal-close" type="button">Start Practicing</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="busy-overlay" aria-live="polite" aria-busy="true">
+      <div class="panel modal">
+        <div class="spinner" aria-hidden="true"></div>
+        <strong id="busy-title">Loading challenge...</strong>
+      </div>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

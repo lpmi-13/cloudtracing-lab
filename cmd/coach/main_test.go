@@ -65,6 +65,9 @@ func TestBuildPreparedChallengeCreatesTraceSearchSpanAssessment(t *testing.T) {
 		Faulty: []traceRecord{
 			traceFixture("trace-1", def, map[string]string{app.BatchAttribute: "batch-17"}),
 		},
+		Healthy: []traceRecord{
+			traceFixture("trace-2", def, map[string]string{app.BatchAttribute: "batch-17"}),
+		},
 	}, func(id string) string { return "/trace/" + id }, func(service, operation string, limit int, tags map[string]string) string {
 		return fmt.Sprintf("/search?service=%s&operation=%s&limit=%d&batch=%s", service, operation, limit, tags[app.BatchAttribute])
 	})
@@ -81,11 +84,14 @@ func TestBuildPreparedChallengeCreatesTraceSearchSpanAssessment(t *testing.T) {
 	if !strings.Contains(challenge.Public.InvestigationLink.URL, "batch=batch-17") {
 		t.Fatalf("expected batch-pinned investigation link, got %q", challenge.Public.InvestigationLink.URL)
 	}
-	if len(challenge.Public.TraceChoices) != 1 || challenge.Public.TraceChoices[0].ID != "trace-1" {
-		t.Fatalf("expected trace choice trace-1, got %+v", challenge.Public.TraceChoices)
+	if len(challenge.Public.TraceChoices) != 2 {
+		t.Fatalf("expected two trace choices, got %+v", challenge.Public.TraceChoices)
 	}
 	if len(challenge.Public.TraceSpanChoices["trace-1"]) == 0 {
 		t.Fatal("expected per-trace span choices")
+	}
+	if len(challenge.Public.TraceSpanChoices["trace-2"]) == 0 {
+		t.Fatal("expected distractor trace span choices")
 	}
 	if len(challenge.ExpectedTraceIDs) != 1 || challenge.ExpectedTraceIDs[0] != "trace-1" {
 		t.Fatalf("expected accepted trace trace-1, got %+v", challenge.ExpectedTraceIDs)
@@ -95,11 +101,41 @@ func TestBuildPreparedChallengeCreatesTraceSearchSpanAssessment(t *testing.T) {
 	}
 }
 
+func TestBuildPreparedChallengeNormalizesTraceSearchSpanChoiceCounts(t *testing.T) {
+	def := firstScenarioByLevel(t, testScenarioSet(), 1)
+	faulty := traceFixture("trace-faulty", def, nil)
+	faulty.Spans = append(faulty.Spans,
+		traceSpan{ID: "extra-a", Service: "inventory-api", Operation: "inventory.lookup.reserve_window", Start: faulty.Start.Add(30 * time.Millisecond), DurationMS: 210, Tags: map[string]string{}},
+		traceSpan{ID: "extra-b", Service: "payments-api", Operation: "payments.authorize.prepare", Start: faulty.Start.Add(40 * time.Millisecond), DurationMS: 160, Tags: map[string]string{}},
+	)
+	healthy := traceFixture("trace-healthy", def, nil)
+
+	challenge, err := buildPreparedChallenge(def, traceGroups{
+		Faulty:  []traceRecord{faulty},
+		Healthy: []traceRecord{healthy},
+	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" })
+	if err != nil {
+		t.Fatalf("buildPreparedChallenge: %v", err)
+	}
+
+	gotFaulty := challenge.Public.TraceSpanChoices["trace-faulty"]
+	gotHealthy := challenge.Public.TraceSpanChoices["trace-healthy"]
+	if len(gotFaulty) != len(gotHealthy) {
+		t.Fatalf("expected matching span-choice counts, got faulty=%d healthy=%d", len(gotFaulty), len(gotHealthy))
+	}
+	if !containsSpanChoice(gotFaulty, challenge.ExpectedSpanID) {
+		t.Fatalf("expected culprit span to remain available after truncation, got %+v", gotFaulty)
+	}
+}
+
 func TestGradeSubmissionRequiresTraceAndSpanEvidence(t *testing.T) {
 	def := firstScenarioByLevel(t, testScenarioSet(), 1)
 	challenge, err := buildPreparedChallenge(def, traceGroups{
 		Faulty: []traceRecord{
 			traceFixture("trace-1", def, nil),
+		},
+		Healthy: []traceRecord{
+			traceFixture("trace-healthy", def, nil),
 		},
 	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" })
 	if err != nil {
@@ -115,7 +151,7 @@ func TestGradeSubmissionRequiresTraceAndSpanEvidence(t *testing.T) {
 	}
 
 	result = gradeSubmission(def, challenge, gradeRequest{
-		SelectedTraceID: "trace-missing",
+		SelectedTraceID: "trace-healthy",
 		SelectedSpan:    challenge.ExpectedSpanID,
 	})
 	if result.Pass {
@@ -274,6 +310,94 @@ func TestSelectLevelAllowsAnyLevelWithoutPriorMastery(t *testing.T) {
 	}
 }
 
+func TestStateSnapshotBootstrapsPreparedChallenge(t *testing.T) {
+	defs := testScenarioSet()
+	s := newTestCoachServer(t, defs)
+	s.jaegerUIURL = "http://jaeger.example"
+
+	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer web.Close()
+
+	s.client = web.Client()
+	s.webURL = web.URL
+
+	selected := firstScenarioByLevel(t, defs, 1)
+	traceCalls := 0
+	s.findRecentTraces = func(_ context.Context, _ string, _ string, since time.Time, need, _ int, batchID string) ([]traceRecord, error) {
+		traceCalls++
+
+		traces := make([]traceRecord, 0, need)
+		for i := 0; i < need; i++ {
+			tags := map[string]string{
+				app.BatchAttribute: batchID,
+			}
+			if i == traceSearchSpanFaultyOffset(batchID, need) {
+				tags[app.ScenarioAttribute] = selected.ID
+			}
+			trace := traceFixture(fmt.Sprintf("%s-%d", batchID, i), selected, tags)
+			trace.Start = since.Add(time.Duration(i+1) * time.Millisecond)
+			traces = append(traces, trace)
+		}
+		return traces, nil
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	s.stateSnapshot(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected state snapshot to succeed, got %d body %q", rec.Code, rec.Body.String())
+	}
+	if traceCalls == 0 {
+		t.Fatal("expected state snapshot to prepare the selected challenge")
+	}
+
+	var snapshot coachSnapshot
+	if err := json.NewDecoder(rec.Body).Decode(&snapshot); err != nil {
+		t.Fatalf("decode snapshot: %v", err)
+	}
+	if !snapshot.CurrentScenario.Assessment.Ready {
+		t.Fatalf("expected prepared assessment in snapshot, got %+v", snapshot.CurrentScenario.Assessment)
+	}
+	if snapshot.JaegerUIURL != "http://jaeger.example" {
+		t.Fatalf("expected jaeger URL in snapshot, got %q", snapshot.JaegerUIURL)
+	}
+}
+
+func TestRoutesServeCoachUIAssets(t *testing.T) {
+	s := newTestCoachServer(t, testScenarioSet())
+	handler := s.routes()
+
+	cases := []struct {
+		path        string
+		contentType string
+		wantBody    string
+	}{
+		{path: "/", contentType: "text/html", wantBody: "<script type=\"module\" src=\"/app.js\"></script>"},
+		{path: "/app.css", contentType: "text/css", wantBody: ".progression-panel"},
+		{path: "/app.js", contentType: "text/javascript", wantBody: "requestSnapshot(\"/api/state\")"},
+	}
+
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d body %q", tc.path, rec.Code, rec.Body.String())
+		}
+		if got := rec.Header().Get("Content-Type"); !strings.Contains(got, tc.contentType) {
+			t.Fatalf("%s: expected content type containing %q, got %q", tc.path, tc.contentType, got)
+		}
+		if !strings.Contains(rec.Body.String(), tc.wantBody) {
+			t.Fatalf("%s: expected body to contain %q", tc.path, tc.wantBody)
+		}
+	}
+}
+
 func TestPickRandomForLevelDifferentVariantPrefersOtherVariantGroup(t *testing.T) {
 	s := &coachServer{
 		levels: []levelDefinition{
@@ -337,6 +461,47 @@ func TestSearchURLIncludesBatchTags(t *testing.T) {
 	}
 }
 
+func TestTraceDisplayIDUsesJaegerPrefix(t *testing.T) {
+	if got := traceDisplayID("9aaa72201234567876ea06a4"); got != "9aaa722" {
+		t.Fatalf("expected Jaeger-aligned trace display, got %q", got)
+	}
+	if got := traceDisplayID("9aaa72"); got != "9aaa72" {
+		t.Fatalf("expected shorter trace ids to remain intact, got %q", got)
+	}
+}
+
+func TestTraceSearchSpanScenarioOrderRotatesFaultyPosition(t *testing.T) {
+	batches := []string{"batch-4", "batch-8", "batch-12", "batch-16"}
+	seenPositions := map[int]struct{}{}
+
+	for _, batchID := range batches {
+		order := traceSearchSpanScenarioOrder("scenario-a", batchID, 1, 3)
+		if len(order) != 4 {
+			t.Fatalf("expected four generated requests for %s, got %d", batchID, len(order))
+		}
+		if countScenarioID(order, "scenario-a") != 1 {
+			t.Fatalf("expected one faulty slot for %s, got %v", batchID, order)
+		}
+
+		position := strings.Index(strings.Join(order, ","), "scenario-a")
+		if order[0] == "scenario-a" {
+			t.Fatalf("expected faulty trace to avoid the oldest slot for %s, got %v", batchID, order)
+		}
+		for i, value := range order {
+			if value == "scenario-a" {
+				seenPositions[i] = struct{}{}
+			}
+		}
+		if position < 0 {
+			t.Fatalf("expected faulty slot for %s, got %v", batchID, order)
+		}
+	}
+
+	if len(seenPositions) < 2 {
+		t.Fatalf("expected faulty slot to vary across batches, got positions %+v", seenPositions)
+	}
+}
+
 func TestGradeRotatesChallengeAfterSecondIncorrectSubmission(t *testing.T) {
 	s := newTestCoachServer(t, testScenarioSet())
 	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -354,9 +519,13 @@ func TestGradeRotatesChallengeAfterSecondIncorrectSubmission(t *testing.T) {
 
 		traces := make([]traceRecord, 0, need)
 		for i := 0; i < need; i++ {
-			trace := traceFixture(fmt.Sprintf("%s-%d", batchID, i), def, map[string]string{
+			tags := map[string]string{
 				app.BatchAttribute: batchID,
-			})
+			}
+			if i == traceSearchSpanFaultyOffset(batchID, need) {
+				tags[app.ScenarioAttribute] = def.ID
+			}
+			trace := traceFixture(fmt.Sprintf("%s-%d", batchID, i), def, tags)
 			trace.Start = since.Add(time.Duration(i+1) * time.Millisecond)
 			traces = append(traces, trace)
 		}
@@ -419,8 +588,8 @@ func TestGradeRotatesChallengeAfterSecondIncorrectSubmission(t *testing.T) {
 	if !s.state.Levels[1].Prepared || s.state.Levels[1].Challenge == nil {
 		t.Fatalf("expected the new challenge to be prepared, got prepared=%t challenge=%+v", s.state.Levels[1].Prepared, s.state.Levels[1].Challenge)
 	}
-	if !strings.Contains(s.state.Feedback, "used both attempts on this challenge") {
-		t.Fatalf("expected rotation feedback after second wrong submission, got %q", s.state.Feedback)
+	if s.state.HasFeedback || s.state.Feedback != "" {
+		t.Fatalf("expected rotation to clear feedback after second wrong submission, got has_feedback=%t feedback=%q", s.state.HasFeedback, s.state.Feedback)
 	}
 }
 
@@ -552,7 +721,9 @@ func testScenarioSet() []scenario.Definition {
 
 func testBatchPlan(assessmentType string) scenario.BatchPlan {
 	switch assessmentType {
-	case assessmentTraceSearchSpan, assessmentCulpritSpan:
+	case assessmentTraceSearchSpan:
+		return scenario.BatchPlan{FaultyCount: 1, HealthyCount: 1, BackgroundCount: 1, CandidateCount: 2}
+	case assessmentCulpritSpan:
 		return scenario.BatchPlan{FaultyCount: 2, BackgroundCount: 1}
 	case assessmentHealthyFaulty:
 		return scenario.BatchPlan{FaultyCount: 2, HealthyCount: 1, BackgroundCount: 1}
@@ -565,4 +736,14 @@ func testBatchPlan(assessmentType string) scenario.BatchPlan {
 	default:
 		return scenario.BatchPlan{}
 	}
+}
+
+func countScenarioID(values []string, target string) int {
+	count := 0
+	for _, value := range values {
+		if value == target {
+			count++
+		}
+	}
+	return count
 }

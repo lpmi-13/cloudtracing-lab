@@ -1,0 +1,10 @@
+{
+  "name": "cloudtracing",
+  "private": true,
+  "scripts": {
+    "coach-ui:dev": "vite"
+  },
+  "devDependencies": {
+    "vite": "^7.0.0"
+  }
+}

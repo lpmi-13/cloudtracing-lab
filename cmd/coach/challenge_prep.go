@@ -24,21 +24,30 @@ func (s *coachServer) prepareChallenge(ctx context.Context, def scenario.Definit
 	groups := traceGroups{}
 	generated := backgroundGenerated
 
-	if plan.FaultyCount > 0 {
-		traces, count, err := s.seedTraceGroup(ctx, def, def.TrafficPath, def.ID, plan.FaultyCount, searchLimit)
+	if def.AssessmentType == assessmentTraceSearchSpan && plan.FaultyCount > 0 && plan.HealthyCount > 0 {
+		mixedGroups, count, err := s.seedTraceSearchSpanGroups(ctx, def, plan.FaultyCount, plan.HealthyCount, searchLimit)
 		generated += count
 		if err != nil {
 			return nil, generated, err
 		}
-		groups.Faulty = traces
-	}
-	if plan.HealthyCount > 0 {
-		traces, count, err := s.seedTraceGroup(ctx, def, def.TrafficPath, "", plan.HealthyCount, searchLimit)
-		generated += count
-		if err != nil {
-			return nil, generated, err
+		groups = mixedGroups
+	} else {
+		if plan.FaultyCount > 0 {
+			traces, count, err := s.seedTraceGroup(ctx, def, def.TrafficPath, def.ID, plan.FaultyCount, searchLimit)
+			generated += count
+			if err != nil {
+				return nil, generated, err
+			}
+			groups.Faulty = traces
 		}
-		groups.Healthy = traces
+		if plan.HealthyCount > 0 {
+			traces, count, err := s.seedTraceGroup(ctx, def, def.TrafficPath, "", plan.HealthyCount, searchLimit)
+			generated += count
+			if err != nil {
+				return nil, generated, err
+			}
+			groups.Healthy = traces
+		}
 	}
 	if plan.BeforeCount > 0 {
 		traces, count, err := s.seedTraceGroup(ctx, def, def.TrafficPath, "", plan.BeforeCount, searchLimit)
@@ -67,13 +76,65 @@ func (s *coachServer) prepareChallenge(ctx context.Context, def scenario.Definit
 	return challenge, generated, nil
 }
 
+func (s *coachServer) seedTraceSearchSpanGroups(ctx context.Context, def scenario.Definition, faultyCount, healthyCount, searchLimit int) (traceGroups, int, error) {
+	total := faultyCount + healthyCount
+	if total <= 0 {
+		return traceGroups{}, 0, nil
+	}
+
+	batchID := newTraceBatchID()
+	since := time.Now()
+	generated := 0
+
+	for _, scenarioID := range traceSearchSpanScenarioOrder(def.ID, batchID, faultyCount, healthyCount) {
+		count, err := s.generateTrafficRequests(ctx, def.TrafficPath, scenarioID, batchID, 1)
+		generated += count
+		if err != nil {
+			return traceGroups{}, generated, err
+		}
+	}
+	if generated < total {
+		return traceGroups{}, generated, fmt.Errorf("generated %d/%d requests for %s", generated, total, def.ID)
+	}
+
+	traces, err := s.recentTraces(ctx, def.FocusService, def.FocusOperation, since, total, searchLimit, batchID)
+	if err != nil {
+		return traceGroups{}, generated, err
+	}
+	if len(traces) < total {
+		return traceGroups{}, generated, fmt.Errorf("loaded %d/%d traces for %s", len(traces), total, def.ID)
+	}
+
+	groups := traceGroups{}
+	for _, trace := range traces {
+		if traceHasAttribute(trace, app.ScenarioAttribute, def.ID) {
+			groups.Faulty = append(groups.Faulty, trace)
+			continue
+		}
+		groups.Healthy = append(groups.Healthy, trace)
+	}
+	if len(groups.Faulty) < faultyCount || len(groups.Healthy) < healthyCount {
+		return traceGroups{}, generated, fmt.Errorf("partitioned %d faulty and %d healthy traces for %s", len(groups.Faulty), len(groups.Healthy), def.ID)
+	}
+
+	groups.Faulty = groups.Faulty[:faultyCount]
+	groups.Healthy = groups.Healthy[:healthyCount]
+	return groups, generated, nil
+}
+
 func (s *coachServer) seedTraceGroup(ctx context.Context, def scenario.Definition, trafficPath, scenarioID string, count, searchLimit int) ([]traceRecord, int, error) {
+	return s.seedTraceGroupWithBatchID(ctx, def, trafficPath, scenarioID, count, searchLimit, "")
+}
+
+func (s *coachServer) seedTraceGroupWithBatchID(ctx context.Context, def scenario.Definition, trafficPath, scenarioID string, count, searchLimit int, batchID string) ([]traceRecord, int, error) {
 	if count <= 0 {
 		return nil, 0, nil
 	}
 
 	since := time.Now()
-	batchID := newTraceBatchID()
+	if batchID == "" {
+		batchID = newTraceBatchID()
+	}
 	generated, err := s.generateTrafficRequests(ctx, trafficPath, scenarioID, batchID, count)
 	if err != nil && generated == 0 {
 		return nil, 0, err
@@ -137,6 +198,30 @@ var traceBatchSeq atomic.Uint64
 
 func newTraceBatchID() string {
 	return fmt.Sprintf("batch-%d", traceBatchSeq.Add(1))
+}
+
+func traceSearchSpanScenarioOrder(scenarioID, batchID string, faultyCount, healthyCount int) []string {
+	total := faultyCount + healthyCount
+	order := make([]string, total)
+	if total == 0 || faultyCount <= 0 {
+		return order
+	}
+
+	offset := traceSearchSpanFaultyOffset(batchID, total)
+	for i := 0; i < faultyCount; i++ {
+		order[(offset+i)%total] = scenarioID
+	}
+	return order
+}
+
+func traceSearchSpanFaultyOffset(batchID string, total int) int {
+	if total <= 1 {
+		return 0
+	}
+
+	// Jaeger search sorts these batches by recency, so slot 0 becomes the last row.
+	// Keep the faulty trace out of that oldest slot while still varying its position.
+	return 1 + stableChoiceOffset(batchID, total-1)
 }
 
 func (s *coachServer) generateTrafficRequests(ctx context.Context, trafficPath, scenarioID, batchID string, count int) (int, error) {
