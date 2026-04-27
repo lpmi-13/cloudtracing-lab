@@ -78,6 +78,24 @@ func (s *coachServer) searchURL(service, operation string, limit int, tags map[s
 	return s.jaegerUIURL + "/search?" + values.Encode()
 }
 
+func (s *coachServer) compareURL(traceA, traceB string, cohort []string) string {
+	if s.jaegerUIURL == "" || traceA == "" || traceB == "" {
+		return ""
+	}
+
+	orderedCohort := orderedUniqueTraceIDs(append([]string{traceA, traceB}, cohort...))
+	values := url.Values{}
+	for _, id := range orderedCohort {
+		values.Add("cohort", id)
+	}
+
+	encoded := values.Encode()
+	if encoded == "" {
+		return s.jaegerUIURL + "/trace/" + traceA + "..." + traceB
+	}
+	return s.jaegerUIURL + "/trace/" + traceA + "..." + traceB + "?" + encoded
+}
+
 func (s *coachServer) recentTraces(ctx context.Context, service, operation string, since time.Time, need, limit int, batchID string) ([]traceRecord, error) {
 	if s.findRecentTraces != nil {
 		return s.findRecentTraces(ctx, service, operation, since, need, limit, batchID)
@@ -260,6 +278,22 @@ func convertJaegerTrace(raw jaegerTrace, focusService, focusOperation string) (t
 		DurationMS: rootDurMS,
 		Spans:      spans,
 	}, true
+}
+
+func orderedUniqueTraceIDs(ids []string) []string {
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 func jaegerTagMap(tags []jaegerTag) map[string]string {

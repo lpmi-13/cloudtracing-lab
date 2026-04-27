@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	masteryTarget           = 5
+	correctTarget           = 5
 	maxAttemptsPerChallenge = 2
 )
 
@@ -22,7 +22,7 @@ type levelDefinition struct {
 }
 
 type levelSession struct {
-	MasteryCount      int
+	CorrectCount      int
 	IncorrectAttempts int
 	Current           scenario.Definition
 	Prepared          bool
@@ -43,9 +43,9 @@ type publicLevel struct {
 	Summary       string `json:"summary"`
 	Unlocked      bool   `json:"unlocked"`
 	Selected      bool   `json:"selected"`
-	Mastered      bool   `json:"mastered"`
-	MasteryCount  int    `json:"mastery_count"`
-	MasteryTarget int    `json:"mastery_target"`
+	ReadyToMoveOn bool   `json:"ready_to_move_on"`
+	CorrectCount  int    `json:"correct_count"`
+	CorrectTarget int    `json:"correct_target"`
 }
 
 type coachSnapshot struct {
@@ -56,7 +56,7 @@ type coachSnapshot struct {
 	HasFeedback     bool           `json:"has_feedback"`
 	JaegerUIURL     string         `json:"jaeger_ui_url"`
 	SelectedLevel   int            `json:"selected_level"`
-	MasteryTarget   int            `json:"mastery_target"`
+	CorrectTarget   int            `json:"correct_target"`
 }
 
 var levelBlueprints = []struct {
@@ -278,9 +278,9 @@ func (s *coachServer) snapshotLocked() coachSnapshot {
 			Summary:       level.Summary,
 			Unlocked:      true,
 			Selected:      s.state.SelectedLevel == level.Number,
-			Mastered:      state.MasteryCount >= masteryTarget,
-			MasteryCount:  state.MasteryCount,
-			MasteryTarget: masteryTarget,
+			ReadyToMoveOn: state.CorrectCount >= correctTarget,
+			CorrectCount:  state.CorrectCount,
+			CorrectTarget: correctTarget,
 		})
 	}
 
@@ -294,7 +294,7 @@ func (s *coachServer) snapshotLocked() coachSnapshot {
 		HasFeedback:     s.state.HasFeedback,
 		JaegerUIURL:     s.jaegerUIURL,
 		SelectedLevel:   s.state.SelectedLevel,
-		MasteryTarget:   masteryTarget,
+		CorrectTarget:   correctTarget,
 	}
 }
 

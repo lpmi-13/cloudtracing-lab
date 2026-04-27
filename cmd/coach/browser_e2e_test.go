@@ -32,7 +32,8 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 		waitForLevelUI(t, tab, assessmentTraceSearchSpan)
 		waitForReferenceTraceLink(t, tab)
 		assertAssessmentContract(t, tab)
-		waitForCondition(t, tab, `document.getElementById("objective").textContent.trim() === "Find the slow trace and span."`)
+		waitForCondition(t, tab, `document.getElementById("title").textContent.trim() === "Find the slow trace and span"`)
+		waitForCondition(t, tab, `document.getElementById("objective").textContent.trim() === ""`)
 		waitForCondition(t, tab, `document.getElementById("open-jaeger").classList.contains("hidden")`)
 		waitForCondition(t, tab, `document.getElementById("assessment-prompt").classList.contains("hidden")`)
 
@@ -41,9 +42,10 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 		waitForFeedbackContains(t, tab, "Select the slow trace you inspected before submitting.")
 
 		setSelectValue(t, tab, "#selected-trace", answer.SelectedTraceID, false)
+		waitForCondition(t, tab, `document.querySelector('label[for="selected-span"]').textContent.trim() === "Slow span"`)
 		setSelectValue(t, tab, "#selected-span", wrongSelectOptionValue(t, tab, "#selected-span", answer.SpanID), false)
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "span evidence is wrong")
+		waitForFeedbackContains(t, tab, "slow span is wrong")
 
 		if answer.InvalidTraceID == "" {
 			t.Fatal("expected a distractor trace for level 1")
@@ -51,17 +53,24 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 		setSelectValue(t, tab, "#selected-trace", answer.InvalidTraceID, false)
 		setSelectValue(t, tab, "#selected-span", answer.SpanID, false)
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "trace choice is wrong")
+		waitForFeedbackContains(t, tab, "trace used is wrong")
 	})
 
 	t.Run("level_2_healthy_faulty", func(t *testing.T) {
-		h := newCoachE2EHarness(t, coachSessionSetup{SelectedLevel: 2, MasteryCounts: map[int]int{1: masteryTarget}})
+		h := newCoachE2EHarness(t, coachSessionSetup{SelectedLevel: 2, CorrectCounts: map[int]int{1: correctTarget}})
 		tab, closeTab := newBrowserRoot(t)
 		defer closeTab()
 
 		navigateCoach(t, tab, h.coach.URL)
 		waitForLevelUI(t, tab, assessmentHealthyFaulty)
 		assertAssessmentContract(t, tab)
+		waitForCondition(t, tab, `document.getElementById("title").textContent.trim() === "Classify the traces as slow or healthy, then name the responsible service and failure mode."`)
+		waitForCondition(t, tab, `document.getElementById("objective").textContent.trim() === ""`)
+		waitForCondition(t, tab, `document.getElementById("open-jaeger").classList.contains("hidden")`)
+		waitForCondition(t, tab, `document.getElementById("reference-trace").classList.contains("hidden")`)
+		waitForCondition(t, tab, `document.getElementById("assessment-prompt").classList.contains("hidden")`)
+		waitForCondition(t, tab, `document.getElementById("issue-help").textContent.includes("load_page")`)
+		waitForCondition(t, tab, `document.querySelector('#issue option[value="expensive_sort"]').textContent.includes("load_page")`)
 
 		answer := h.waitForSelectedAnswer(t)
 		setSelectValue(t, tab, "#service", answer.Service, false)
@@ -73,13 +82,13 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 		setTraceRole(t, tab, answer.FaultyTraceIDs[1], "healthy")
 		setTraceRole(t, tab, answer.HealthyTraceID, "slow")
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "trace grouping is wrong")
+		waitForFeedbackContains(t, tab, "slow trace and healthy trace selections are wrong")
 	})
 
 	t.Run("level_3_before_after", func(t *testing.T) {
 		h := newCoachE2EHarness(t, coachSessionSetup{
 			SelectedLevel: 3,
-			MasteryCounts: map[int]int{1: masteryTarget, 2: masteryTarget},
+			CorrectCounts: map[int]int{1: correctTarget, 2: correctTarget},
 		})
 		tab, closeTab := newBrowserRoot(t)
 		defer closeTab()
@@ -87,6 +96,10 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 		navigateCoach(t, tab, h.coach.URL)
 		waitForLevelUI(t, tab, assessmentBeforeAfter)
 		assertAssessmentContract(t, tab)
+		waitForCondition(t, tab, `(() => {
+			const link = document.querySelector("#reference-trace a");
+			return !!link && link.textContent.includes("vs") && link.href.includes("/trace/") && link.href.includes("...");
+		})()`)
 
 		answer := h.waitForSelectedAnswer(t)
 		setSelectValue(t, tab, "#service", answer.Service, false)
@@ -97,13 +110,13 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 		setSelectValue(t, tab, "#before-trace", "bogus-before", true)
 		setSelectValue(t, tab, "#after-trace", answer.AfterTraceID, false)
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "baseline trace is wrong")
+		waitForFeedbackContains(t, tab, "before trace is wrong")
 	})
 
 	t.Run("level_4_span_attribute", func(t *testing.T) {
 		h := newCoachE2EHarness(t, coachSessionSetup{
 			SelectedLevel: 4,
-			MasteryCounts: map[int]int{1: masteryTarget, 2: masteryTarget, 3: masteryTarget},
+			CorrectCounts: map[int]int{1: correctTarget, 2: correctTarget, 3: correctTarget},
 		})
 		tab, closeTab := newBrowserRoot(t)
 		defer closeTab()
@@ -128,7 +141,7 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 	t.Run("level_5_intermittent_failure", func(t *testing.T) {
 		h := newCoachE2EHarness(t, coachSessionSetup{
 			SelectedLevel: 5,
-			MasteryCounts: map[int]int{1: masteryTarget, 2: masteryTarget, 3: masteryTarget, 4: masteryTarget},
+			CorrectCounts: map[int]int{1: correctTarget, 2: correctTarget, 3: correctTarget, 4: correctTarget},
 		})
 		tab, closeTab := newBrowserRoot(t)
 		defer closeTab()
@@ -145,7 +158,7 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 
 		setChecked(t, tab, "failing-trace", answer.FailingTraceIDs[0], true)
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "intermittent failure set is wrong")
+		waitForFeedbackContains(t, tab, "failing traces selection is wrong")
 	})
 }
 
@@ -196,17 +209,21 @@ func TestCoachBrowserSharedStateAndProgression(t *testing.T) {
 	waitForCondition(t, tabA, levelUnlockedExpression(2, true))
 	waitForCondition(t, tabA, levelUnlockedExpression(5, true))
 
-	for attempt := 1; attempt <= masteryTarget; attempt++ {
+	for attempt := 1; attempt <= correctTarget; attempt++ {
 		titleBefore := textContent(t, tabA, "#title")
 		solveSelectedLevel(t, h, tabA)
 		waitForCondition(t, tabA, levelUnlockedExpression(2, true))
-		waitForProgress(t, tabA, fmt.Sprintf("%d/%d correct", attempt, masteryTarget))
-		if attempt < masteryTarget {
+		waitForProgress(t, tabA, fmt.Sprintf("%d/%d correct", attempt, correctTarget))
+		if attempt < correctTarget {
 			waitForCondition(t, tabA, fmt.Sprintf(`document.getElementById("title").textContent.trim() !== %q`, titleBefore))
-			waitForCondition(t, tabB, fmt.Sprintf(`document.getElementById("selected-level-progress").textContent.trim() === %q`, fmt.Sprintf("%d/%d correct", attempt, masteryTarget)))
-			waitForCondition(t, tabC, fmt.Sprintf(`document.getElementById("selected-level-progress").textContent.trim() === %q`, fmt.Sprintf("%d/%d correct", attempt, masteryTarget)))
+			waitForCondition(t, tabB, fmt.Sprintf(`document.getElementById("selected-level-progress").textContent.trim() === %q`, fmt.Sprintf("%d/%d correct", attempt, correctTarget)))
+			waitForCondition(t, tabC, fmt.Sprintf(`document.getElementById("selected-level-progress").textContent.trim() === %q`, fmt.Sprintf("%d/%d correct", attempt, correctTarget)))
 		}
 	}
+	waitForLevelReadyModal(t, tabA, 1)
+	closeLevelReadyModalIfVisible(t, tabA)
+	closeLevelReadyModalIfVisible(t, tabB)
+	closeLevelReadyModalIfVisible(t, tabC)
 
 	waitForCondition(t, tabA, levelUnlockedExpression(2, true))
 	waitForCondition(t, tabA, levelUnlockedExpression(3, true))
@@ -248,10 +265,67 @@ func TestCoachBrowserSharedStateAndProgression(t *testing.T) {
 	waitForFeedbackHidden(t, tabC)
 }
 
+func TestCoachBrowserLevelReadyModalShowsOncePerLevel(t *testing.T) {
+	h := newCoachE2EHarness(t, coachSessionSetup{})
+	tab, closeTab := newBrowserRoot(t)
+	defer closeTab()
+
+	navigateCoach(t, tab, h.coach.URL)
+	waitForLevelUI(t, tab, assessmentTraceSearchSpan)
+
+	for attempt := 1; attempt <= correctTarget; attempt++ {
+		solveSelectedLevel(t, h, tab)
+		waitForProgress(t, tab, fmt.Sprintf("%d/%d correct", attempt, correctTarget))
+	}
+
+	waitForLevelReadyModal(t, tab, 1)
+	closeLevelReadyModalIfVisible(t, tab)
+	reloadPage(t, tab)
+	waitForCondition(t, tab, `document.getElementById("level-ready-modal").classList.contains("hidden")`)
+}
+
+func TestCoachBrowserLevelReadyModalCanAdvanceToNextLevel(t *testing.T) {
+	h := newCoachE2EHarness(t, coachSessionSetup{})
+	tab, closeTab := newBrowserRoot(t)
+	defer closeTab()
+
+	navigateCoach(t, tab, h.coach.URL)
+	waitForLevelUI(t, tab, assessmentTraceSearchSpan)
+
+	for attempt := 1; attempt <= correctTarget; attempt++ {
+		solveSelectedLevel(t, h, tab)
+		waitForProgress(t, tab, fmt.Sprintf("%d/%d correct", attempt, correctTarget))
+	}
+
+	waitForLevelReadyModal(t, tab, 1)
+	click(t, tab, "#level-ready-next")
+	waitForSelectedLevel(t, tab, 2)
+	waitForLevelUI(t, tab, assessmentHealthyFaulty)
+}
+
+func TestCoachBrowserFinalLevelReadyModalOmitsNextLevel(t *testing.T) {
+	h := newCoachE2EHarness(t, coachSessionSetup{
+		SelectedLevel: 5,
+		CorrectCounts: map[int]int{1: correctTarget, 2: correctTarget, 3: correctTarget, 4: correctTarget},
+	})
+	tab, closeTab := newBrowserRoot(t)
+	defer closeTab()
+
+	navigateCoach(t, tab, h.coach.URL)
+	waitForLevelUI(t, tab, assessmentIntermittent)
+
+	for attempt := 1; attempt <= correctTarget; attempt++ {
+		solveSelectedLevel(t, h, tab)
+		waitForProgress(t, tab, fmt.Sprintf("%d/%d correct", attempt, correctTarget))
+	}
+
+	waitForLevelReadyModal(t, tab, 5)
+}
+
 func TestCoachBrowserRestartReset(t *testing.T) {
 	h := newCoachE2EHarness(t, coachSessionSetup{
 		SelectedLevel: 2,
-		MasteryCounts: map[int]int{1: masteryTarget, 2: 2},
+		CorrectCounts: map[int]int{1: correctTarget, 2: 2},
 	})
 
 	tabA, closeA := newBrowserRoot(t)
@@ -288,7 +362,7 @@ func TestCoachBrowserRestartReset(t *testing.T) {
 
 type coachSessionSetup struct {
 	SelectedLevel int
-	MasteryCounts map[int]int
+	CorrectCounts map[int]int
 }
 
 type seededTrafficRequest struct {
@@ -414,8 +488,8 @@ func (h *coachE2EHarness) restart(t *testing.T, setup coachSessionSetup) {
 	for _, level := range levels {
 		state := server.state.Levels[level.Number]
 		state.Current = level.Scenarios[0]
-		if mastery, ok := setup.MasteryCounts[level.Number]; ok {
-			state.MasteryCount = mastery
+		if correctCount, ok := setup.CorrectCounts[level.Number]; ok {
+			state.CorrectCount = correctCount
 		}
 	}
 	server.setFeedbackLocked(fmt.Sprintf("%s selected. Fresh traces will be prepared for the current challenge.", server.levelLabel(server.state.SelectedLevel)), false)
@@ -817,9 +891,9 @@ func waitForReferenceTraceLink(t *testing.T, ctx context.Context) {
 func assertAssessmentContract(t *testing.T, ctx context.Context) {
 	t.Helper()
 
-	waitForCondition(t, ctx, `document.getElementById("objective").textContent.trim().length > 0`)
+	waitForCondition(t, ctx, `document.getElementById("title").textContent.trim().length > 0`)
 	waitForCondition(t, ctx, `document.getElementById("assessment-prompt").classList.contains("hidden") || document.getElementById("assessment-prompt").textContent.trim().length > 0`)
-	waitForCondition(t, ctx, `document.getElementById("reference-trace").textContent.trim().length > 0`)
+	waitForCondition(t, ctx, `document.getElementById("reference-trace").classList.contains("hidden") || document.getElementById("reference-trace").textContent.trim().length > 0`)
 }
 
 func waitForFeedbackContains(t *testing.T, ctx context.Context, substring string) {
@@ -830,6 +904,35 @@ func waitForFeedbackContains(t *testing.T, ctx context.Context, substring string
 func waitForFeedbackHidden(t *testing.T, ctx context.Context) {
 	t.Helper()
 	waitForCondition(t, ctx, `document.getElementById("feedback-panel").classList.contains("hidden")`)
+}
+
+func waitForLevelReadyModal(t *testing.T, ctx context.Context, level int) {
+	t.Helper()
+	waitForCondition(t, ctx, `!document.getElementById("level-ready-modal").classList.contains("hidden")`)
+	waitForCondition(t, ctx, fmt.Sprintf(`document.getElementById("level-ready-title").textContent.startsWith(%q)`, fmt.Sprintf("Level %d", level)))
+	waitForCondition(t, ctx, `document.getElementById("level-ready-summary").textContent.includes("5/5 correct")`)
+	if level < 5 {
+		waitForCondition(t, ctx, `document.getElementById("level-ready-focus-title").textContent.trim() === "Ready to move on"`)
+		waitForCondition(t, ctx, `document.getElementById("level-ready-copy").textContent.includes("ready for the next level")`)
+		waitForCondition(t, ctx, `!document.getElementById("level-ready-next").classList.contains("hidden")`)
+		return
+	}
+	waitForCondition(t, ctx, `document.getElementById("level-ready-focus-title").textContent.trim() === "Level complete"`)
+	waitForCondition(t, ctx, `document.getElementById("level-ready-copy").textContent.includes("final level")`)
+	waitForCondition(t, ctx, `document.getElementById("level-ready-next").classList.contains("hidden")`)
+}
+
+func closeLevelReadyModalIfVisible(t *testing.T, ctx context.Context) {
+	t.Helper()
+
+	var visible bool
+	runChromedp(t, ctx, chromedp.Evaluate(`!document.getElementById("level-ready-modal").classList.contains("hidden")`, &visible))
+	if !visible {
+		return
+	}
+
+	click(t, ctx, "#level-ready-close")
+	waitForCondition(t, ctx, `document.getElementById("level-ready-modal").classList.contains("hidden")`)
 }
 
 func waitForSelectedLevel(t *testing.T, ctx context.Context, level int) {

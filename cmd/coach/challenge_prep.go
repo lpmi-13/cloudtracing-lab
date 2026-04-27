@@ -66,7 +66,7 @@ func (s *coachServer) prepareChallenge(ctx context.Context, def scenario.Definit
 		groups.After = traces
 	}
 
-	challenge, err := buildPreparedChallenge(def, groups, s.traceURL, s.searchURL)
+	challenge, err := buildPreparedChallenge(def, groups, s.traceURL, s.searchURL, s.compareURL)
 	if err != nil {
 		return nil, generated, err
 	}

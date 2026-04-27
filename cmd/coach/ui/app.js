@@ -1,13 +1,39 @@
 const minimumSubmitBusyMs = 700;
 const skillPlacementKey = "cloudtracing.skillPlacement.v1";
+const levelIntroKeyPrefix = "cloudtracing.levelIntro.v1.";
+const levelReadyKeyPrefix = "cloudtracing.levelReady.v1.";
 const mobileProgressionQuery = window.matchMedia("(max-width: 840px)");
+const levelIntroContent = {
+  1: {
+    scene: "You have just joined the team and want to understand how requests actually move through the system before you change anything. You open recent traces to learn the landscape, get a feel for normal request timing, and spot any obvious bottlenecks worth investigating.",
+    objective: "Practice spotting one slow request and the span that best explains the delay."
+  },
+  2: {
+    scene: "A teammate says the service feels inconsistent: some requests seem fine, others feel sluggish. Before you jump to a conclusion, you compare several traces to separate healthy requests from regressed ones and look for the pattern the slow traces share.",
+    objective: "Practice classifying mixed traces and identifying the responsible service behind the slow ones."
+  },
+  3: {
+    scene: "A rollout just finished and the team wants to know whether it changed real user behavior or whether the slowdown is just noise. You compare traces from before and after the change to understand what shifted in the request path.",
+    objective: "Practice explaining what changed by using Jaeger Compare on before-and-after traces."
+  },
+  4: {
+    scene: "You think you know which service is responsible, but now you need evidence strong enough to convince the rest of the team in a review or incident thread. That means finding the exact span and the concrete attribute that proves why it is slow.",
+    objective: "Practice proving the root cause with span-level evidence instead of relying on a hunch."
+  },
+  5: {
+    scene: "You are helping during an on-call incident where the failure is intermittent. Not every request is broken, and rushing to a conclusion could send the team in the wrong direction. You need to isolate the traces that actually show the failure and identify what they have in common.",
+    objective: "Practice isolating intermittent failures under noisy, ambiguous conditions."
+  }
+};
 
 let coachState = {};
 let hintLevel = 0;
 let lastScenarioID = "";
 let lastSelectedLevel = 0;
+let lastCorrectCountsByLevel = {};
 let levelsCollapsed = mobileProgressionQuery.matches;
 let levelsCollapseTouched = false;
+let pendingLevelReady = 0;
 
 function currentScenario() {
   return coachState.current_scenario || {};
@@ -25,10 +51,15 @@ function selectedLevel() {
   return (coachState.levels || []).find((level) => level.selected) || null;
 }
 
+function nextLevel(levelNumber) {
+  return (coachState.levels || []).find((level) => level.number === levelNumber + 1) || null;
+}
+
 function renderJaegerLink() {
   const link = document.getElementById("open-jaeger");
   const href = coachState.jaeger_ui_url || "";
-  const hidden = !href || currentAssessment().type === "trace_search_span";
+  const type = currentAssessment().type;
+  const hidden = !href || type === "trace_search_span" || type === "healthy_faulty";
 
   link.href = href || "#";
   link.classList.toggle("hidden", hidden);
@@ -158,16 +189,16 @@ function renderLevels() {
     if (level.selected) {
       button.classList.add("selected");
     }
-    if (level.mastered) {
-      button.classList.add("mastered");
+    if (level.ready_to_move_on) {
+      button.classList.add("ready");
     }
     button.innerHTML =
       "<div class=\"level-topline\">" +
         "<strong>" + level.title + "</strong>" +
-        "<span class=\"level-state\">" + (level.mastered ? "Mastered" : "Open") + "</span>" +
+        "<span class=\"level-state\">" + (level.ready_to_move_on ? "Ready" : "Open") + "</span>" +
       "</div>" +
       "<div class=\"level-summary\">" + level.summary + "</div>" +
-      "<div class=\"level-progress\">" + level.mastery_count + "/" + level.mastery_target + " correct</div>";
+      "<div class=\"level-progress\">" + level.correct_count + "/" + level.correct_target + " correct</div>";
     button.addEventListener("click", () => selectLevel(level.number));
     root.appendChild(button);
   });
@@ -188,8 +219,54 @@ function markSkillPlacementSeen() {
   }
 }
 
+function levelIntroKey(level) {
+  return levelIntroKeyPrefix + String(level);
+}
+
+function levelReadyKey(level) {
+  return levelReadyKeyPrefix + String(level);
+}
+
+function hasSeenLevelIntro(level) {
+  try {
+    return window.localStorage.getItem(levelIntroKey(level)) === "done";
+  } catch (error) {
+    return false;
+  }
+}
+
+function markLevelIntroSeen(level) {
+  try {
+    window.localStorage.setItem(levelIntroKey(level), "done");
+  } catch (error) {
+  }
+}
+
+function hasSeenLevelReady(level) {
+  try {
+    return window.localStorage.getItem(levelReadyKey(level)) === "done";
+  } catch (error) {
+    return false;
+  }
+}
+
+function markLevelReadySeen(level) {
+  try {
+    window.localStorage.setItem(levelReadyKey(level), "done");
+  } catch (error) {
+  }
+}
+
 function setSkillModalVisible(visible) {
   document.getElementById("skill-modal").classList.toggle("hidden", !visible);
+}
+
+function setLevelIntroVisible(visible) {
+  document.getElementById("level-intro-modal").classList.toggle("hidden", !visible);
+}
+
+function setLevelReadyVisible(visible) {
+  document.getElementById("level-ready-modal").classList.toggle("hidden", !visible);
 }
 
 function showSkillExplanation() {
@@ -229,6 +306,7 @@ async function chooseSkillPlacement(event) {
 
 function closeSkillPlacement() {
   setSkillModalVisible(false);
+  maybeShowLevelIntro();
 }
 
 function maybeShowSkillPlacement() {
@@ -237,9 +315,162 @@ function maybeShowSkillPlacement() {
   }
 }
 
+function renderLevelIntro(levelNumber) {
+  const intro = levelIntroContent[levelNumber];
+  const level = selectedLevel();
+  const modal = document.getElementById("level-intro-modal");
+  if (!intro || !level) {
+    return;
+  }
+
+  modal.dataset.level = String(levelNumber);
+  document.getElementById("level-intro-title").textContent = level.title + " • " + level.summary;
+  document.getElementById("level-intro-scene").textContent = intro.scene;
+  document.getElementById("level-intro-objective").textContent = intro.objective;
+  document.getElementById("level-intro-close").textContent = "Start " + level.title;
+}
+
+function maybeShowLevelIntro() {
+  if (!hasSeenSkillPlacement()) {
+    return;
+  }
+
+  const level = selectedLevel();
+  if (!level || !levelIntroContent[level.number] || hasSeenLevelIntro(level.number)) {
+    return;
+  }
+
+  renderLevelIntro(level.number);
+  setLevelIntroVisible(true);
+  document.getElementById("level-intro-close").focus();
+}
+
+function closeLevelIntro() {
+  const modal = document.getElementById("level-intro-modal");
+  const levelNumber = Number(modal.dataset.level || coachState.selected_level || 0);
+  if (levelNumber > 0) {
+    markLevelIntroSeen(levelNumber);
+  }
+  setLevelIntroVisible(false);
+  maybeShowLevelReady();
+}
+
+function renderLevelReady(levelNumber) {
+  const level = selectedLevel();
+  const modal = document.getElementById("level-ready-modal");
+  const next = nextLevel(levelNumber);
+  const nextButton = document.getElementById("level-ready-next");
+  if (!level || level.number !== levelNumber) {
+    return;
+  }
+
+  modal.dataset.level = String(levelNumber);
+  modal.dataset.nextLevel = next ? String(next.number) : "";
+  document.getElementById("level-ready-title").textContent = level.title + " • " + level.summary;
+  document.getElementById("level-ready-summary").textContent = "You have " + level.correct_count + "/" + level.correct_target + " correct on this level.";
+  if (next) {
+    document.getElementById("level-ready-focus-title").textContent = "Ready to move on";
+    document.getElementById("level-ready-copy").textContent = "You have demonstrated success here and are ready for the next level whenever you want. You can also stay on this level and keep practicing for as long as you like.";
+    nextButton.textContent = "Move to " + next.title;
+    nextButton.classList.remove("hidden");
+    return;
+  }
+
+  document.getElementById("level-ready-focus-title").textContent = "Level complete";
+  document.getElementById("level-ready-copy").textContent = "You have demonstrated success on the final level. You can stay on this level and keep practicing for as long as you like.";
+  nextButton.textContent = "";
+  nextButton.classList.add("hidden");
+}
+
+function queueLevelReady(level) {
+  if (!level || hasSeenLevelReady(level.number)) {
+    return;
+  }
+  const previous = lastCorrectCountsByLevel[level.number];
+  if (typeof previous !== "number") {
+    return;
+  }
+  if (previous < level.correct_target && level.correct_count >= level.correct_target) {
+    pendingLevelReady = level.number;
+  }
+}
+
+function maybeShowLevelReady() {
+  if (!hasSeenSkillPlacement() || pendingLevelReady <= 0) {
+    return;
+  }
+  if (!document.getElementById("skill-modal").classList.contains("hidden")) {
+    return;
+  }
+  if (!document.getElementById("level-intro-modal").classList.contains("hidden")) {
+    return;
+  }
+
+  const level = selectedLevel();
+  if (!level || level.number !== pendingLevelReady || hasSeenLevelReady(level.number)) {
+    return;
+  }
+
+  renderLevelReady(level.number);
+  markLevelReadySeen(level.number);
+  pendingLevelReady = 0;
+  setLevelReadyVisible(true);
+  if (document.getElementById("level-ready-next").classList.contains("hidden")) {
+    document.getElementById("level-ready-close").focus();
+  } else {
+    document.getElementById("level-ready-next").focus();
+  }
+}
+
+function closeLevelReady() {
+  setLevelReadyVisible(false);
+}
+
+async function moveToNextLevel() {
+  const next = Number(document.getElementById("level-ready-modal").dataset.nextLevel || 0);
+  if (next <= 0) {
+    return;
+  }
+
+  setLevelReadyVisible(false);
+  await selectLevel(next);
+}
+
+function updateLastCorrectCounts() {
+  const next = {};
+  (coachState.levels || []).forEach((level) => {
+    next[level.number] = level.correct_count || 0;
+  });
+  lastCorrectCountsByLevel = next;
+}
+
 function renderReferenceTrace(assessment) {
   const shell = document.getElementById("reference-trace");
   shell.innerHTML = "";
+  shell.classList.remove("hidden");
+
+  if (assessment.type === "healthy_faulty") {
+    shell.classList.add("hidden");
+    return;
+  }
+
+  if (assessment.compare_link) {
+    const intro = document.createElement("span");
+    intro.textContent = "Open Jaeger Compare with a prepared before/after pair:";
+    shell.appendChild(intro);
+
+    if (assessment.compare_link.url) {
+      const link = document.createElement("a");
+      link.href = assessment.compare_link.url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = assessment.compare_link.label;
+      shell.appendChild(link);
+    } else {
+      shell.appendChild(document.createTextNode(assessment.compare_link.label));
+    }
+    return;
+  }
 
   if (assessment.investigation_link) {
     const intro = document.createElement("span");
@@ -287,7 +518,7 @@ function renderReferenceTrace(assessment) {
       shell.textContent = "Open each trace link " + traceLinksPlacementCopy() + ", decide which ones are slow or healthy, then classify each trace once.";
       break;
     case "before_after":
-      shell.textContent = "Pick one baseline trace and one slow trace from the shared candidate list below.";
+      shell.textContent = "Open Jaeger Compare with one before trace and one after trace from the candidate lists below.";
       break;
     case "intermittent_failure":
       shell.textContent = "Open the trace links below and select the failing ones.";
@@ -374,7 +605,7 @@ function appendTraceClassifier(container, options, previousRoles) {
   label.textContent = "Trace classification";
   container.appendChild(label);
 
-  appendNote(container, "Each trace appears once. Mark the slow traces, mark the one healthy trace, then name the shared culprit above.");
+  appendNote(container, "Each trace appears once. Mark the slow traces, mark the one healthy trace, then name the responsible service above.");
 
   const group = document.createElement("div");
   group.className = "checkbox-group";
@@ -506,9 +737,12 @@ function renderAssessmentFields(force) {
   const signature = [
     assessment.type || "",
     String(assessment.ready),
+    assessment.compare_link ? assessment.compare_link.label : "",
     assessment.investigation_link ? assessment.investigation_link.label : "",
     assessment.reference_trace ? assessment.reference_trace.id : "",
     (assessment.trace_choices || []).length,
+    (assessment.before_trace_choices || []).length,
+    (assessment.after_trace_choices || []).length,
     (assessment.span_choices || []).length,
     (assessment.attribute_choices || []).length
   ].join(":");
@@ -535,12 +769,12 @@ function renderAssessmentFields(force) {
         appendNote(shell, "Select the slow trace you inspected to load its span choices.");
         break;
       }
-      appendSelect(shell, "selected-span", "Culprit span", traceSpanChoicesForAssessment(assessment), "Select the span");
+      appendSelect(shell, "selected-span", "Slow span", traceSpanChoicesForAssessment(assessment), "Select the span");
       restoreSelectValue("selected-span", previousState.selectedSpanID);
       break;
     case "culprit_span":
       if (!selectedServiceValue()) {
-        appendNote(shell, "Select the culprit service to load its span choices.");
+        appendNote(shell, "Select the responsible service to load its span choices.");
         break;
       }
       appendSelect(shell, "selected-span", "Culprit span", spanChoicesForAssessment(assessment), "Select the span");
@@ -550,14 +784,14 @@ function renderAssessmentFields(force) {
       appendTraceClassifier(shell, assessment.trace_choices, previousState.traceRoles);
       break;
     case "before_after":
-      appendSelect(shell, "before-trace", "Before trace", assessment.trace_choices, "Select a baseline trace");
-      appendSelect(shell, "after-trace", "After trace", assessment.trace_choices, "Select a slow trace");
+      appendSelect(shell, "before-trace", "Before trace", assessment.before_trace_choices || [], "Select the before trace");
+      appendSelect(shell, "after-trace", "After trace", assessment.after_trace_choices || [], "Select the after trace");
       restoreSelectValue("before-trace", previousState.beforeTraceID);
       restoreSelectValue("after-trace", previousState.afterTraceID);
       break;
     case "span_attribute":
       if (!selectedServiceValue()) {
-        appendNote(shell, "Select the culprit service to load its span choices.");
+        appendNote(shell, "Select the responsible service to load its span choices.");
         break;
       }
       appendSelect(shell, "selected-span", "Culprit span", spanChoicesForAssessment(assessment), "Select the span");
@@ -636,7 +870,7 @@ function validateAssessment(assessment, payload) {
       if (!payload.selected_trace_id) {
         return "Select the slow trace you inspected before submitting.";
       }
-      return payload.selected_span ? "" : "Select the culprit span before submitting.";
+      return payload.selected_span ? "" : "Select the slow span before submitting.";
     case "culprit_span":
       return payload.selected_span ? "" : "Select the culprit span before submitting.";
     case "healthy_faulty":
@@ -676,13 +910,15 @@ function render() {
   const selected = selectedLevel();
   const scenarioChanged = current.id !== lastScenarioID || coachState.selected_level !== lastSelectedLevel;
   const assessmentPrompt = document.getElementById("assessment-prompt");
+  const levelOneTraceSearch = assessment.type === "trace_search_span";
+  const levelTwoHealthyFaulty = assessment.type === "healthy_faulty";
 
-  document.getElementById("title").textContent = current.title || "";
-  document.getElementById("objective").textContent = current.objective || "";
+  document.getElementById("title").textContent = levelOneTraceSearch ? "Find the slow trace and span" : (levelTwoHealthyFaulty ? (current.objective || current.title || "") : (current.title || ""));
+  document.getElementById("objective").textContent = levelOneTraceSearch || levelTwoHealthyFaulty ? "" : (current.objective || "");
   assessmentPrompt.textContent = assessment.prompt || "";
-  assessmentPrompt.classList.toggle("hidden", assessment.type === "trace_search_span" || !assessment.prompt);
+  assessmentPrompt.classList.toggle("hidden", assessment.type === "trace_search_span" || assessment.type === "healthy_faulty" || !assessment.prompt);
   document.getElementById("selected-level-title").textContent = selected ? (selected.title + " • " + selected.summary) : "Level";
-  document.getElementById("selected-level-progress").textContent = selected ? (selected.mastery_count + "/" + selected.mastery_target + " correct") : "";
+  document.getElementById("selected-level-progress").textContent = selected ? (selected.correct_count + "/" + selected.correct_target + " correct") : "";
 
   if (scenarioChanged) {
     document.getElementById("service").value = "";
@@ -697,9 +933,13 @@ function render() {
   renderLevels();
   renderHints();
   setFeedback(coachState.feedback, coachState.feedback_ok, coachState.has_feedback);
+  queueLevelReady(selected);
+  maybeShowLevelIntro();
+  maybeShowLevelReady();
 
   lastScenarioID = current.id || "";
   lastSelectedLevel = coachState.selected_level || 0;
+  updateLastCorrectCounts();
 }
 
 function applySnapshot(snapshot) {
@@ -772,7 +1012,7 @@ async function submit() {
   }
 
   if (requiresDiagnosis(assessment) && (!suspectedService || !suspectedIssue)) {
-    setFeedback("Select both a culprit service and a failure mode before submitting.", false, true);
+    setFeedback("Select both a responsible service and a failure mode before submitting.", false, true);
     return;
   }
 
@@ -802,7 +1042,7 @@ async function submit() {
       })
     });
   } catch (error) {
-    setFeedback("Submitting the diagnosis failed. Refresh the page and try again.", false, true);
+    setFeedback("Submitting your answer failed. Refresh the page and try again.", false, true);
   } finally {
     await minimumBusy;
     clearBusy();
@@ -844,6 +1084,9 @@ document.querySelectorAll("[data-skill-choice]").forEach((button) => {
   button.addEventListener("click", chooseSkillPlacement);
 });
 document.getElementById("skill-modal-close").addEventListener("click", closeSkillPlacement);
+document.getElementById("level-intro-close").addEventListener("click", closeLevelIntro);
+document.getElementById("level-ready-next").addEventListener("click", moveToNextLevel);
+document.getElementById("level-ready-close").addEventListener("click", closeLevelReady);
 document.getElementById("service").addEventListener("change", () => {
   const type = currentAssessment().type;
   if (type === "culprit_span" || type === "span_attribute") {

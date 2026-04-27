@@ -330,7 +330,7 @@ func (s *coachServer) grade(w http.ResponseWriter, r *http.Request) {
 	result := gradeSubmission(current, state.Challenge, req)
 	if !result.Pass {
 		if state.Challenge == nil || !state.Challenge.Public.Ready {
-			s.setFeedbackLocked(fmt.Sprintf("%s %s remains at %d/%d mastery.", result.Message, s.levelLabel(level), state.MasteryCount, masteryTarget), false)
+			s.setFeedbackLocked(fmt.Sprintf("%s %s remains at %d/%d correct.", result.Message, s.levelLabel(level), state.CorrectCount, correctTarget), false)
 			snapshot, subscribers := s.snapshotAndSubscribersLocked()
 			s.mu.Unlock()
 			s.actionMu.Unlock()
@@ -346,7 +346,7 @@ func (s *coachServer) grade(w http.ResponseWriter, r *http.Request) {
 			if remaining != 1 {
 				attemptLabel = "attempts"
 			}
-			s.setFeedbackLocked(fmt.Sprintf("%s %s remains at %d/%d mastery. %d %s remain on this challenge before the coach loads a new one.", result.Message, s.levelLabel(level), state.MasteryCount, masteryTarget, remaining, attemptLabel), false)
+			s.setFeedbackLocked(fmt.Sprintf("%s %s remains at %d/%d correct. %d %s remain on this challenge before the coach loads a new one.", result.Message, s.levelLabel(level), state.CorrectCount, correctTarget, remaining, attemptLabel), false)
 			snapshot, subscribers := s.snapshotAndSubscribersLocked()
 			s.mu.Unlock()
 			s.actionMu.Unlock()
@@ -375,10 +375,10 @@ func (s *coachServer) grade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if state.MasteryCount < masteryTarget {
-		state.MasteryCount++
+	if state.CorrectCount < correctTarget {
+		state.CorrectCount++
 	}
-	masteryCount := state.MasteryCount
+	correctCount := state.CorrectCount
 	next := s.pickRandomForLevel(level, current.ID)
 	s.setLevelScenarioLocked(level, next)
 	s.mu.Unlock()
@@ -386,7 +386,7 @@ func (s *coachServer) grade(w http.ResponseWriter, r *http.Request) {
 	_, err := s.prepareLevelScenario(r.Context(), level, defaultTraceBatchSize)
 
 	s.mu.Lock()
-	message := fmt.Sprintf("Correct. %s is now at %d/%d mastery.", s.levelLabel(level), masteryCount, masteryTarget)
+	message := fmt.Sprintf("Correct. %s is now at %d/%d correct.", s.levelLabel(level), correctCount, correctTarget)
 	if err != nil {
 		message += "\n\nA fresh challenge was selected, but automatic trace generation failed. Refresh or request a new challenge and try again."
 	}

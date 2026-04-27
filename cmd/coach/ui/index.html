@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Trace Coach</title>
-    <meta name="description" content="Level-based trace practice with self-selected starting points, five-attempt mastery tracking, and synchronized state across every open coach tab.">
+    <meta name="description" content="Level-based trace practice with self-selected starting points, five-correct progress tracking, and synchronized state across every open coach tab.">
     <link rel="icon" href="/favicon.ico">
     <link rel="stylesheet" href="/app.css">
   </head>
@@ -36,14 +36,12 @@
           <div class="actions">
             <a id="open-jaeger" class="button hidden" target="_blank" rel="noreferrer" href="#">Open Jaeger</a>
             <button id="next-challenge" type="button">New Challenge</button>
+            <button id="hint" type="button">Show Hint</button>
           </div>
           <div class="challenge-copy">
             <p id="assessment-prompt" class="muted"></p>
           </div>
           <div id="hint-panel" class="stack">
-            <div class="actions">
-              <button id="hint" type="button">Show Hint</button>
-            </div>
             <div id="hint-shell" class="hint-shell" aria-hidden="true">
               <div id="hint-box" class="muted"></div>
             </div>
@@ -54,7 +52,7 @@
           <div>
             <h3>Submit Answer</h3>
             <div id="service-field">
-              <label class="field-label" for="service">Culprit service</label>
+              <label class="field-label" for="service">Responsible service</label>
               <select id="service">
                 <option value="">Select service</option>
                 <option value="catalog-api">catalog-api</option>
@@ -66,12 +64,13 @@
             <div id="issue-field">
               <label class="field-label" for="issue">Failure mode</label>
               <select id="issue">
-                <option value="">Select issue type</option>
-                <option value="expensive_search_query">expensive search query</option>
-                <option value="n_plus_one_queries">n plus one queries</option>
-                <option value="lock_wait_timeout">lock wait timeout</option>
-                <option value="expensive_sort">expensive sort</option>
+                <option value="">Select failure mode</option>
+                <option value="expensive_search_query">expensive search query (broad search call)</option>
+                <option value="n_plus_one_queries">n plus one queries (many repeated lookups)</option>
+                <option value="lock_wait_timeout">lock wait timeout (waiting on a DB lock)</option>
+                <option value="expensive_sort">expensive sort (long load_page / ORDER BY query)</option>
               </select>
+              <p id="issue-help" class="muted field-help">Use the slow span and its tags: repeated small lookups suggest n plus one queries, a long <code>load_page</code> or <code>ORDER BY</code> query suggests expensive sort, and waiting on a database lock suggests lock wait timeout.</p>
             </div>
             <div id="assessment-fields" class="stack"></div>
             <div class="actions">
@@ -113,6 +112,41 @@
           <p class="muted">All levels are available from the progression bar at the top. If the starting point feels too easy or too hard, choose a different level or revisit a specific skill whenever you want more practice.</p>
           <div class="actions">
             <button id="skill-modal-close" type="button">Start Practicing</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="level-intro-modal" class="onboarding-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="level-intro-title">
+      <div class="panel onboarding-modal">
+        <div class="onboarding-step">
+          <div class="eyebrow">Setting the Scene</div>
+          <h2 id="level-intro-title"></h2>
+          <p id="level-intro-scene" class="muted"></p>
+          <div class="level-intro-focus">
+            <strong>What you'll practice</strong>
+            <p id="level-intro-objective" class="muted"></p>
+          </div>
+          <div class="actions">
+            <button id="level-intro-close" type="button">Start Level</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="level-ready-modal" class="onboarding-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="level-ready-title">
+      <div class="panel onboarding-modal">
+        <div class="onboarding-step">
+          <div class="eyebrow">5/5 Correct</div>
+          <h2 id="level-ready-title"></h2>
+          <p id="level-ready-summary" class="muted"></p>
+          <div class="level-ready-focus">
+            <strong id="level-ready-focus-title">Ready to move on</strong>
+            <p id="level-ready-copy" class="muted"></p>
+          </div>
+          <div class="actions">
+            <button id="level-ready-next" type="button" class="hidden"></button>
+            <button id="level-ready-close" type="button">Keep Practicing</button>
           </div>
         </div>
       </div>

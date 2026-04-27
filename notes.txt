@@ -1,0 +1,8 @@
+- the top component with the progression is way too big. Make it much smaller, especially on mobile (maybe totally collapsable)
+- there's too much text on the screen, cut whatever's not absolutely necessary (eg "Unlocked levels stay selectable", and all the labels like "Python Web Tier" can also go away).
+- In Level 1, the reference trace takes you directly to the view with all the info, you don't need to read any of the instructions.
+- for Stage 2, you can literally just click the reference trace links and just pick the regressed ones that are slow and the healthy one that's not, you don't need to analyze anything.
+- The hints are now not so relevant and either need to be revamped or deleted. Possibly some of the text that we cut can be moved into the hints section.
+- Instead of "Regressed traces" let's use "Slow traces"
+- The entire coach feedback section should not be shown until there's actual feedback (either on a successful answer or a wrong answer). It shouldn't be shown by default at the beginning of a new challenge.
+- Remove "Every open coach tab shares the same selected level, current challenge, and mastery counts. Unlocking stays sequential: master the selected level to open the next one."

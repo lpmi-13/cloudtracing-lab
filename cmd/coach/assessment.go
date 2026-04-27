@@ -68,8 +68,11 @@ type publicAssessment struct {
 	PassCondition        string                             `json:"pass_condition"`
 	StartGuide           string                             `json:"start_guide"`
 	InvestigationLink    *publicLinkOption                  `json:"investigation_link,omitempty"`
+	CompareLink          *publicLinkOption                  `json:"compare_link,omitempty"`
 	ReferenceTrace       *publicTraceOption                 `json:"reference_trace,omitempty"`
 	TraceChoices         []publicTraceOption                `json:"trace_choices,omitempty"`
+	BeforeTraceChoices   []publicTraceOption                `json:"before_trace_choices,omitempty"`
+	AfterTraceChoices    []publicTraceOption                `json:"after_trace_choices,omitempty"`
 	FaultyTraceChoices   []publicTraceOption                `json:"faulty_trace_choices,omitempty"`
 	HealthyTraceChoices  []publicTraceOption                `json:"healthy_trace_choices,omitempty"`
 	FailingTraceChoices  []publicTraceOption                `json:"failing_trace_choices,omitempty"`
@@ -120,44 +123,44 @@ func requiredEvidenceFor(def scenario.Definition) []string {
 	case assessmentTraceSearchSpan:
 		return []string{
 			"Select the slow trace you inspected from the prepared search results.",
-			"Select the culprit span inside that trace.",
+			"Select the slow span inside that trace.",
 		}
 	case assessmentCulpritSpan:
 		return []string{
-			"Select the culprit service.",
+			"Select the responsible service.",
 			"Select the failure mode.",
-			"Select the slow span inside the reference trace.",
+			"Select the culprit span inside the reference trace.",
 		}
 	case assessmentHealthyFaulty:
 		return []string{
-			"Select the culprit service.",
+			"Select the responsible service.",
 			"Select the failure mode.",
 			"Select every slow trace from the mixed candidate set.",
 			"Select the one healthy trace from the same candidate set.",
 		}
 	case assessmentBeforeAfter:
 		return []string{
-			"Select the culprit service.",
+			"Select the responsible service.",
 			"Select the failure mode.",
-			"Select one baseline trace from before the regression.",
-			"Select one slow trace from after the change.",
+			"Select one before trace from before the regression.",
+			"Select one after trace from after the change.",
 		}
 	case assessmentSpanAttribute:
 		return []string{
-			"Select the culprit service.",
+			"Select the responsible service.",
 			"Select the failure mode.",
 			"Select the culprit span inside the reference trace.",
-			"Select the supporting attribute that proves the diagnosis.",
+			"Select the supporting attribute that proves the root cause.",
 		}
 	case assessmentIntermittent:
 		return []string{
-			"Select the culprit service.",
+			"Select the responsible service.",
 			"Select the failure mode.",
 			"Select every failing trace from the intermittent candidate set.",
 		}
 	default:
 		return []string{
-			"Select the culprit service.",
+			"Select the responsible service.",
 			"Select the failure mode.",
 		}
 	}
@@ -166,30 +169,30 @@ func requiredEvidenceFor(def scenario.Definition) []string {
 func passConditionFor(def scenario.Definition) string {
 	switch def.AssessmentType {
 	case assessmentTraceSearchSpan:
-		return "Full credit requires the intended slow trace from the prepared search and the correct culprit span from that trace."
+		return "Full credit requires the intended slow trace from the prepared search and the correct slow span from that trace."
 	case assessmentCulpritSpan:
-		return "Full credit requires the correct service, issue, and culprit span from the reference trace."
+		return "Full credit requires the correct responsible service, failure mode, and culprit span from the reference trace."
 	case assessmentHealthyFaulty:
-		return "Full credit requires the correct service, issue, all slow traces, and the healthy trace."
+		return "Full credit requires the correct responsible service, failure mode, all slow traces, and the healthy trace."
 	case assessmentBeforeAfter:
-		return "Full credit requires the correct service, issue, one valid before trace, and one valid after trace."
+		return "Full credit requires the correct responsible service, failure mode, one valid before trace, and one valid after trace from Jaeger Compare."
 	case assessmentSpanAttribute:
-		return "Full credit requires the correct service, issue, culprit span, and supporting attribute."
+		return "Full credit requires the correct responsible service, failure mode, culprit span, and supporting attribute."
 	case assessmentIntermittent:
-		return "Full credit requires the correct service, issue, and every failing trace from the intermittent set."
+		return "Full credit requires the correct responsible service, failure mode, and every failing trace from the intermittent set."
 	default:
-		return "Full credit requires the correct diagnosis and evidence."
+		return "Full credit requires the correct responsible service, failure mode, and supporting evidence."
 	}
 }
 
 func startGuideFor(def scenario.Definition) string {
 	switch def.Level {
 	case 1:
-		return "Open the prepared trace search, inspect one slow trace, and pick the culprit span."
+		return "Open the prepared trace search, inspect one slow trace, and pick the slow span."
 	case 2:
 		return "Open the trace links, pick the slow ones, and choose the one healthy trace."
 	case 3:
-		return fmt.Sprintf("Compare one before trace with one slow after trace for %s.", def.Route)
+		return fmt.Sprintf("Open Jaeger Compare with one before trace and one after trace for %s.", def.Route)
 	case 4:
 		return fmt.Sprintf("Open the reference trace for %s, find the culprit span, then prove it with one attribute.", def.Route)
 	case 5:
@@ -262,7 +265,13 @@ func normalizeBatchPlan(def scenario.Definition, fallbackCount int) scenario.Bat
 	return plan
 }
 
-func buildPreparedChallenge(def scenario.Definition, groups traceGroups, traceURL func(string) string, searchURL func(string, string, int, map[string]string) string) (*preparedChallenge, error) {
+func buildPreparedChallenge(
+	def scenario.Definition,
+	groups traceGroups,
+	traceURL func(string) string,
+	searchURL func(string, string, int, map[string]string) string,
+	compareURL func(string, string, []string) string,
+) (*preparedChallenge, error) {
 	public := assessmentShell(def)
 
 	switch def.AssessmentType {
@@ -321,10 +330,9 @@ func buildPreparedChallenge(def scenario.Definition, groups traceGroups, traceUR
 		}
 		choices := append([]traceRecord{}, groups.Healthy...)
 		choices = append(choices, groups.Faulty...)
-		sortTraceRecords(choices)
 
 		public.Ready = true
-		public.TraceChoices = traceOptions(choices, traceURL)
+		public.TraceChoices = shuffledTraceOptions(choices, traceURL)
 		public.FaultyTraceChoices = public.TraceChoices
 		public.HealthyTraceChoices = public.TraceChoices
 		return &preparedChallenge{
@@ -337,11 +345,15 @@ func buildPreparedChallenge(def scenario.Definition, groups traceGroups, traceUR
 		if len(groups.Before) == 0 || len(groups.After) == 0 {
 			return nil, fmt.Errorf("before/after trace set incomplete for %s", def.ID)
 		}
-		choices := append([]traceRecord{}, groups.Before...)
-		choices = append(choices, groups.After...)
-		sortTraceRecords(choices)
+		beforeChoices := traceOptions(groups.Before, traceURL)
+		afterChoices := traceOptions(groups.After, traceURL)
+		choices := append(append([]publicTraceOption{}, beforeChoices...), afterChoices...)
+		cohortIDs := append(append([]string{}, traceIDs(groups.Before)...), traceIDs(groups.After)...)
 		public.Ready = true
-		public.TraceChoices = traceOptions(choices, traceURL)
+		public.TraceChoices = choices
+		public.BeforeTraceChoices = beforeChoices
+		public.AfterTraceChoices = afterChoices
+		public.CompareLink = compareLinkOption(beforeChoices[0].ID, afterChoices[0].ID, cohortIDs, compareURL)
 		return &preparedChallenge{
 			Public:                 public,
 			ExpectedBeforeTraceIDs: traceIDs(groups.Before),
@@ -429,7 +441,7 @@ func gradeSubmission(def scenario.Definition, challenge *preparedChallenge, req 
 		if traceOK && spanOK {
 			return gradeResult{
 				Pass:    true,
-				Message: "Correct. You chose the intended slow trace from the prepared search and isolated the culprit span.",
+				Message: "Correct. The trace used and slow span both match the intended slow request.",
 			}
 		}
 		return gradeResult{Pass: false, Message: traceSearchSpanFeedback(traceOK, spanOK)}
@@ -439,7 +451,7 @@ func gradeSubmission(def scenario.Definition, challenge *preparedChallenge, req 
 		if serviceOK && issueOK && spanOK {
 			return gradeResult{
 				Pass:    true,
-				Message: "Correct. The diagnosis and the culprit span both match the reference trace.",
+				Message: "Correct. The responsible service, failure mode, and culprit span all match the reference trace.",
 			}
 		}
 		return gradeResult{Pass: false, Message: culpritSpanFeedback(serviceOK, issueOK, spanOK)}
@@ -450,7 +462,7 @@ func gradeSubmission(def scenario.Definition, challenge *preparedChallenge, req 
 		if serviceOK && issueOK && faultyOK && healthyOK {
 			return gradeResult{
 				Pass:    true,
-				Message: "Correct. You separated the slow traces from the healthy trace and named the right culprit.",
+				Message: "Correct. You separated the slow traces from the healthy trace and chose the right responsible service and failure mode.",
 			}
 		}
 		return gradeResult{Pass: false, Message: mixedTraceFeedback(serviceOK, issueOK, faultyOK, healthyOK)}
@@ -461,7 +473,7 @@ func gradeSubmission(def scenario.Definition, challenge *preparedChallenge, req 
 		if serviceOK && issueOK && beforeOK && afterOK {
 			return gradeResult{
 				Pass:    true,
-				Message: "Correct. You matched the right service and issue, and your before/after comparison uses the intended traces.",
+				Message: "Correct. The responsible service, failure mode, before trace, and after trace all match the intended comparison.",
 			}
 		}
 		return gradeResult{Pass: false, Message: beforeAfterFeedback(serviceOK, issueOK, beforeOK, afterOK)}
@@ -472,7 +484,7 @@ func gradeSubmission(def scenario.Definition, challenge *preparedChallenge, req 
 		if serviceOK && issueOK && spanOK && attributeOK {
 			return gradeResult{
 				Pass:    true,
-				Message: "Correct. The diagnosis, culprit span, and supporting attribute all line up.",
+				Message: "Correct. The responsible service, failure mode, culprit span, and supporting attribute all line up.",
 			}
 		}
 		return gradeResult{Pass: false, Message: spanAttributeFeedback(serviceOK, issueOK, spanOK, attributeOK)}
@@ -482,7 +494,7 @@ func gradeSubmission(def scenario.Definition, challenge *preparedChallenge, req 
 		if serviceOK && issueOK && failingOK {
 			return gradeResult{
 				Pass:    true,
-				Message: "Correct. You identified the intermittent failure set and the owning service.",
+				Message: "Correct. You identified the failing traces and chose the right responsible service and failure mode.",
 			}
 		}
 		return gradeResult{Pass: false, Message: intermittentFeedback(serviceOK, issueOK, failingOK)}
@@ -498,47 +510,47 @@ func gradeSubmission(def scenario.Definition, challenge *preparedChallenge, req 
 func traceSearchSpanFeedback(traceOK, spanOK bool) string {
 	switch {
 	case !traceOK && spanOK:
-		return "The culprit span is right, but the trace choice is wrong. Reopen the prepared search and choose the intended slow trace."
+		return "The slow span is right, but the trace used is wrong. Reopen the prepared search and choose the intended slow trace."
 	case traceOK && !spanOK:
-		return "The trace choice is right, but the span evidence is wrong. Reopen that trace and identify the specific slow span."
+		return "The trace used is right, but the slow span is wrong. Reopen that trace and identify the specific slow span."
 	default:
-		return "Neither the trace choice nor the span evidence is correct yet. Reopen the prepared search and inspect the slow branch again."
+		return "The trace used and slow span are both wrong. Reopen the prepared search and inspect the slow branch again."
 	}
 }
 
 func culpritSpanFeedback(serviceOK, issueOK, spanOK bool) string {
 	if serviceOK && issueOK && !spanOK {
-		return "The diagnosis is right, but the span evidence is wrong. Reopen the reference trace and identify the specific slow span."
+		return "The responsible service and failure mode are right, but the culprit span is wrong. Reopen the reference trace and identify the specific slow span."
 	}
 	if serviceOK && !issueOK && spanOK {
-		return "The span points to the right service, but the issue type is wrong. Recheck the failure mode before submitting again."
+		return "The responsible service and culprit span are right, but the failure mode is wrong. Recheck the failure mode before submitting again."
 	}
-	return diagnosisFeedback(serviceOK, issueOK) + " The reference span still needs attention."
+	return serviceFailureModeFeedback(serviceOK, issueOK) + " The culprit span is also wrong."
 }
 
 func mixedTraceFeedback(serviceOK, issueOK, faultyOK, healthyOK bool) string {
 	switch {
 	case serviceOK && issueOK && !faultyOK && healthyOK:
-		return "The diagnosis is right, but the slow trace set is wrong. Compare the candidate traces again and select every slow one."
+		return "The responsible service and failure mode are right, but the slow trace selections are wrong. Compare the candidate traces again and select every slow one."
 	case serviceOK && issueOK && faultyOK && !healthyOK:
-		return "The diagnosis is right, but the healthy trace is wrong. Pick the one trace that stayed healthy."
+		return "The responsible service and failure mode are right, but the healthy trace is wrong. Pick the one trace that stayed healthy."
 	case serviceOK && issueOK:
-		return "The diagnosis is right, but the trace grouping is wrong. Separate the healthy trace from the slow ones before resubmitting."
+		return "The responsible service and failure mode are right, but the slow trace and healthy trace selections are wrong. Separate the healthy trace from the slow ones before resubmitting."
 	default:
-		return diagnosisFeedback(serviceOK, issueOK) + " The trace grouping still needs work."
+		return serviceFailureModeFeedback(serviceOK, issueOK) + " Recheck the slow trace and healthy trace selections."
 	}
 }
 
 func beforeAfterFeedback(serviceOK, issueOK, beforeOK, afterOK bool) string {
 	switch {
 	case serviceOK && issueOK && !beforeOK && afterOK:
-		return "The diagnosis is right, but the baseline trace is wrong. Pick a trace from before the regression window."
+		return "The responsible service and failure mode are right, but the before trace is wrong. Pick a trace from before the regression window."
 	case serviceOK && issueOK && beforeOK && !afterOK:
-		return "The diagnosis is right, but the after trace is wrong. Pick one of the slow traces from after the change."
+		return "The responsible service and failure mode are right, but the after trace is wrong. Pick one of the slow traces from after the change."
 	case serviceOK && issueOK:
-		return "The diagnosis is right, but the comparison pair is wrong. Recheck which trace belongs to each side of the change."
+		return "The responsible service and failure mode are right, but the before trace and after trace are wrong. Recheck which trace belongs to each side of the change."
 	default:
-		return diagnosisFeedback(serviceOK, issueOK) + " The before/after comparison is still off."
+		return serviceFailureModeFeedback(serviceOK, issueOK) + " Recheck the before trace and after trace selections."
 	}
 }
 
@@ -547,31 +559,31 @@ func spanAttributeFeedback(serviceOK, issueOK, spanOK, attributeOK bool) string 
 	case serviceOK && issueOK && !spanOK && attributeOK:
 		return "The supporting attribute is right, but the culprit span is wrong. Reopen the reference trace and identify the exact span carrying that attribute."
 	case serviceOK && issueOK && spanOK && !attributeOK:
-		return "The diagnosis and culprit span are right, but the supporting attribute is wrong. Choose the attribute that proves the root cause."
+		return "The responsible service, failure mode, and culprit span are right, but the supporting attribute is wrong. Choose the attribute that proves the root cause."
 	case serviceOK && issueOK:
-		return "The diagnosis is right, but the supporting evidence is incomplete. Recheck both the culprit span and the attribute."
+		return "The responsible service and failure mode are right, but the culprit span and supporting attribute are both wrong. Recheck both fields."
 	default:
-		return diagnosisFeedback(serviceOK, issueOK) + " The span evidence still needs work."
+		return serviceFailureModeFeedback(serviceOK, issueOK) + " Recheck the culprit span and supporting attribute."
 	}
 }
 
 func intermittentFeedback(serviceOK, issueOK, failingOK bool) string {
 	if serviceOK && issueOK && !failingOK {
-		return "The diagnosis is right, but the intermittent failure set is wrong. Select every failing trace and leave the healthy ones unselected."
+		return "The responsible service and failure mode are right, but the failing traces selection is wrong. Select every failing trace and leave the healthy ones unselected."
 	}
-	return diagnosisFeedback(serviceOK, issueOK) + " Recheck which traces actually failed."
+	return serviceFailureModeFeedback(serviceOK, issueOK) + " Recheck the failing traces selection."
 }
 
-func diagnosisFeedback(serviceOK, issueOK bool) string {
+func serviceFailureModeFeedback(serviceOK, issueOK bool) string {
 	switch {
 	case serviceOK && !issueOK:
-		return "The service is right, but the issue type is wrong."
+		return "The responsible service is right, but the failure mode is wrong."
 	case !serviceOK && issueOK:
-		return "The issue type is right, but the owning service is wrong."
+		return "The failure mode is right, but the responsible service is wrong."
 	case !serviceOK && !issueOK:
-		return "Neither the service nor the issue type is correct yet."
+		return "Neither the responsible service nor the failure mode is correct yet."
 	default:
-		return "The diagnosis is right."
+		return "The responsible service and failure mode are right."
 	}
 }
 
@@ -586,9 +598,18 @@ func traceOption(trace traceRecord, traceURL func(string) string) *publicTraceOp
 func traceOptions(records []traceRecord, traceURL func(string) string) []publicTraceOption {
 	sorted := append([]traceRecord{}, records...)
 	sortTraceRecords(sorted)
+	return traceOptionsInOrder(sorted, traceURL)
+}
 
-	options := make([]publicTraceOption, 0, len(sorted))
-	for _, record := range sorted {
+func shuffledTraceOptions(records []traceRecord, traceURL func(string) string) []publicTraceOption {
+	return traceOptionsInOrder(stableShuffleTraceRecords(records), traceURL)
+}
+
+func traceOptionsInOrder(records []traceRecord, traceURL func(string) string) []publicTraceOption {
+	ordered := append([]traceRecord{}, records...)
+
+	options := make([]publicTraceOption, 0, len(ordered))
+	for _, record := range ordered {
 		options = append(options, publicTraceOption{
 			ID:    record.ID,
 			Label: traceLabel(record),
@@ -596,6 +617,31 @@ func traceOptions(records []traceRecord, traceURL func(string) string) []publicT
 		})
 	}
 	return options
+}
+
+func stableShuffleTraceRecords(records []traceRecord) []traceRecord {
+	shuffled := append([]traceRecord{}, records...)
+	if len(shuffled) <= 1 {
+		return shuffled
+	}
+
+	seed := strings.Join(traceIDs(shuffled), "|")
+	sort.Slice(shuffled, func(i, j int) bool {
+		left := stableHash(seed + "|" + shuffled[i].ID)
+		right := stableHash(seed + "|" + shuffled[j].ID)
+		if left == right {
+			return shuffled[i].ID < shuffled[j].ID
+		}
+		return left < right
+	})
+	return shuffled
+}
+
+func compareLinkOption(beforeID, afterID string, cohortIDs []string, compareURL func(string, string, []string) string) *publicLinkOption {
+	return &publicLinkOption{
+		Label: fmt.Sprintf("trace %s vs trace %s", traceDisplayID(beforeID), traceDisplayID(afterID)),
+		URL:   compareURL(beforeID, afterID, cohortIDs),
+	}
 }
 
 func spanChoicesForTrace(def scenario.Definition, trace traceRecord) []publicSpanOption {
@@ -796,9 +842,13 @@ func stableChoiceOffset(seed string, size int) int {
 	if size <= 1 || seed == "" {
 		return 0
 	}
+	return int(stableHash(seed) % uint32(size))
+}
+
+func stableHash(seed string) uint32 {
 	hash := fnv.New32a()
 	_, _ = hash.Write([]byte(seed))
-	return int(hash.Sum32() % uint32(size))
+	return hash.Sum32()
 }
 
 func spanChoiceID(service, operation string) string {

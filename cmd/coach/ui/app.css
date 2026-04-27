@@ -204,7 +204,7 @@ select {
   border-color: var(--accent-strong);
 }
 
-.level-button.mastered:not(.selected) {
+.level-button.ready:not(.selected) {
   background: #f8eee3;
 }
 
@@ -257,7 +257,7 @@ select {
 }
 
 .hidden {
-  display: none;
+  display: none !important;
 }
 
 #feedback {
@@ -312,6 +312,11 @@ code {
   display: block;
   margin-bottom: 6px;
   font-weight: 600;
+}
+
+.field-help {
+  margin: -2px 0 10px;
+  font-size: 0.92rem;
 }
 
 .checkbox-group {
@@ -450,6 +455,30 @@ code {
   color: var(--muted);
   font-size: 0.92rem;
   line-height: 1.35;
+}
+
+.level-intro-focus {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #f3ede3;
+}
+
+.level-intro-focus p {
+  margin: 0;
+}
+
+.level-ready-focus {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #f3ede3;
+}
+
+.level-ready-focus p {
+  margin: 0;
 }
 
 .modal-error {

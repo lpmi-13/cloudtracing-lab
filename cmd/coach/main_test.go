@@ -70,7 +70,7 @@ func TestBuildPreparedChallengeCreatesTraceSearchSpanAssessment(t *testing.T) {
 		},
 	}, func(id string) string { return "/trace/" + id }, func(service, operation string, limit int, tags map[string]string) string {
 		return fmt.Sprintf("/search?service=%s&operation=%s&limit=%d&batch=%s", service, operation, limit, tags[app.BatchAttribute])
-	})
+	}, func(string, string, []string) string { return "" })
 	if err != nil {
 		t.Fatalf("buildPreparedChallenge: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestBuildPreparedChallengeNormalizesTraceSearchSpanChoiceCounts(t *testing.
 	challenge, err := buildPreparedChallenge(def, traceGroups{
 		Faulty:  []traceRecord{faulty},
 		Healthy: []traceRecord{healthy},
-	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" })
+	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" }, func(string, string, []string) string { return "" })
 	if err != nil {
 		t.Fatalf("buildPreparedChallenge: %v", err)
 	}
@@ -128,6 +128,50 @@ func TestBuildPreparedChallengeNormalizesTraceSearchSpanChoiceCounts(t *testing.
 	}
 }
 
+func TestBuildPreparedChallengeMixedTraceOrderDoesNotDependOnTiming(t *testing.T) {
+	def := firstScenarioByLevel(t, testScenarioSet(), 2)
+	base := time.Unix(1700000000, 0)
+
+	healthyFirst := traceFixture("trace-healthy", def, nil)
+	faultyAFirst := traceFixture("trace-faulty-a", def, nil)
+	faultyBFirst := traceFixture("trace-faulty-b", def, nil)
+	healthyFirst.Start = base.Add(3 * time.Second)
+	faultyAFirst.Start = base.Add(2 * time.Second)
+	faultyBFirst.Start = base.Add(1 * time.Second)
+
+	challengeA, err := buildPreparedChallenge(def, traceGroups{
+		Healthy: []traceRecord{healthyFirst},
+		Faulty:  []traceRecord{faultyAFirst, faultyBFirst},
+	}, func(id string) string { return "/trace/" + id }, func(string, string, int, map[string]string) string { return "" }, func(string, string, []string) string { return "" })
+	if err != nil {
+		t.Fatalf("buildPreparedChallenge first timing set: %v", err)
+	}
+
+	healthyLast := traceFixture("trace-healthy", def, nil)
+	faultyASecond := traceFixture("trace-faulty-a", def, nil)
+	faultyBSecond := traceFixture("trace-faulty-b", def, nil)
+	healthyLast.Start = base.Add(1 * time.Second)
+	faultyASecond.Start = base.Add(3 * time.Second)
+	faultyBSecond.Start = base.Add(2 * time.Second)
+
+	challengeB, err := buildPreparedChallenge(def, traceGroups{
+		Healthy: []traceRecord{healthyLast},
+		Faulty:  []traceRecord{faultyASecond, faultyBSecond},
+	}, func(id string) string { return "/trace/" + id }, func(string, string, int, map[string]string) string { return "" }, func(string, string, []string) string { return "" })
+	if err != nil {
+		t.Fatalf("buildPreparedChallenge second timing set: %v", err)
+	}
+
+	gotA := publicTraceChoiceIDs(challengeA.Public.TraceChoices)
+	gotB := publicTraceChoiceIDs(challengeB.Public.TraceChoices)
+	if !sameOrderedStrings(gotA, gotB) {
+		t.Fatalf("expected stable mixed trace order independent of timing, got %v vs %v", gotA, gotB)
+	}
+	if !sameStringSet(gotA, []string{"trace-healthy", "trace-faulty-a", "trace-faulty-b"}) {
+		t.Fatalf("expected the same mixed trace ids, got %v", gotA)
+	}
+}
+
 func TestGradeSubmissionRequiresTraceAndSpanEvidence(t *testing.T) {
 	def := firstScenarioByLevel(t, testScenarioSet(), 1)
 	challenge, err := buildPreparedChallenge(def, traceGroups{
@@ -137,7 +181,7 @@ func TestGradeSubmissionRequiresTraceAndSpanEvidence(t *testing.T) {
 		Healthy: []traceRecord{
 			traceFixture("trace-healthy", def, nil),
 		},
-	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" })
+	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" }, func(string, string, []string) string { return "" })
 	if err != nil {
 		t.Fatalf("buildPreparedChallenge: %v", err)
 	}
@@ -215,18 +259,32 @@ func TestGradeSubmissionAllowsAnyValidBeforeAfterPair(t *testing.T) {
 	}
 }
 
-func TestBuildPreparedChallengeMergesBeforeAfterTraceChoices(t *testing.T) {
+func TestBuildPreparedChallengeCreatesBeforeAfterCompareAssessment(t *testing.T) {
 	def := firstScenarioByLevel(t, testScenarioSet(), 3)
 	challenge, err := buildPreparedChallenge(def, traceGroups{
 		Before: []traceRecord{traceFixture("before-1", def, nil)},
 		After:  []traceRecord{traceFixture("after-1", def, nil)},
-	}, func(id string) string { return "/trace/" + id }, func(string, string, int, map[string]string) string { return "" })
+	}, func(id string) string { return "/trace/" + id }, func(string, string, int, map[string]string) string { return "" }, func(beforeID, afterID string, cohort []string) string {
+		return "/trace/" + beforeID + "..." + afterID + "?cohort=" + strings.Join(cohort, ",")
+	})
 	if err != nil {
 		t.Fatalf("buildPreparedChallenge: %v", err)
 	}
 
 	if len(challenge.Public.TraceChoices) != 2 {
 		t.Fatalf("expected merged trace choices, got %+v", challenge.Public.TraceChoices)
+	}
+	if len(challenge.Public.BeforeTraceChoices) != 1 {
+		t.Fatalf("expected one before trace choice, got %+v", challenge.Public.BeforeTraceChoices)
+	}
+	if len(challenge.Public.AfterTraceChoices) != 1 {
+		t.Fatalf("expected one after trace choice, got %+v", challenge.Public.AfterTraceChoices)
+	}
+	if challenge.Public.CompareLink == nil || !strings.Contains(challenge.Public.CompareLink.URL, "/trace/before-1...after-1") {
+		t.Fatalf("expected compare link with before/after pair, got %+v", challenge.Public.CompareLink)
+	}
+	if !strings.Contains(challenge.Public.CompareLink.URL, "cohort=before-1,after-1") {
+		t.Fatalf("expected compare cohort in link, got %+v", challenge.Public.CompareLink)
 	}
 	if !containsID(challenge.ExpectedBeforeTraceIDs, "before-1") {
 		t.Fatalf("expected before trace id to be preserved, got %+v", challenge.ExpectedBeforeTraceIDs)
@@ -244,7 +302,7 @@ func TestGradeSubmissionRequiresSupportingAttribute(t *testing.T) {
 				def.AnswerKey.AttributeKey: def.AnswerKey.AttributeValue,
 			}),
 		},
-	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" })
+	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" }, func(string, string, []string) string { return "" })
 	if err != nil {
 		t.Fatalf("buildPreparedChallenge: %v", err)
 	}
@@ -284,7 +342,7 @@ func TestSnapshotMarksEveryLevelSelectable(t *testing.T) {
 	}
 }
 
-func TestSelectLevelAllowsAnyLevelWithoutPriorMastery(t *testing.T) {
+func TestSelectLevelAllowsAnyLevelWithoutPriorCorrectCount(t *testing.T) {
 	s := newTestCoachServer(t, testScenarioSet())
 
 	s.mu.Lock()
@@ -461,6 +519,23 @@ func TestSearchURLIncludesBatchTags(t *testing.T) {
 	}
 }
 
+func TestCompareURLIncludesPreparedPairAndCohort(t *testing.T) {
+	s := &coachServer{jaegerUIURL: "http://jaeger.example"}
+
+	got := s.compareURL("before-1", "after-1", []string{"before-1", "before-2", "after-1", "after-2", "before-1"})
+	if !strings.Contains(got, "/trace/before-1...after-1") {
+		t.Fatalf("expected compare route in URL, got %q", got)
+	}
+	if strings.Count(got, "cohort=") != 4 {
+		t.Fatalf("expected four cohort entries, got %q", got)
+	}
+	for _, expected := range []string{"cohort=before-1", "cohort=before-2", "cohort=after-1", "cohort=after-2"} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("expected %q in compare URL, got %q", expected, got)
+		}
+	}
+}
+
 func TestTraceDisplayIDUsesJaegerPrefix(t *testing.T) {
 	if got := traceDisplayID("9aaa72201234567876ea06a4"); got != "9aaa722" {
 		t.Fatalf("expected Jaeger-aligned trace display, got %q", got)
@@ -536,7 +611,7 @@ func TestGradeRotatesChallengeAfterSecondIncorrectSubmission(t *testing.T) {
 	def := s.state.Levels[1].Current
 	challenge, err := buildPreparedChallenge(def, traceGroups{
 		Faulty: []traceRecord{traceFixture("trace-1", def, map[string]string{app.BatchAttribute: "batch-initial"})},
-	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" })
+	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" }, func(string, string, []string) string { return "" })
 	if err != nil {
 		s.mu.Unlock()
 		t.Fatalf("buildPreparedChallenge: %v", err)
@@ -637,6 +712,26 @@ func firstScenarioByLevel(t *testing.T, defs []scenario.Definition, level int) s
 	}
 	t.Fatalf("missing scenario for level %d", level)
 	return scenario.Definition{}
+}
+
+func publicTraceChoiceIDs(options []publicTraceOption) []string {
+	ids := make([]string, 0, len(options))
+	for _, option := range options {
+		ids = append(ids, option.ID)
+	}
+	return ids
+}
+
+func sameOrderedStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func traceFixture(id string, def scenario.Definition, extraTags map[string]string) traceRecord {
