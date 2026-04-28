@@ -192,10 +192,11 @@ function renderLevels() {
     if (level.ready_to_move_on) {
       button.classList.add("ready");
     }
+    const completionMark = level.ready_to_move_on ? "<span class=\"level-complete\" aria-label=\"5 of 5 correct\" title=\"5/5 correct\">&#10003;</span>" : "";
     button.innerHTML =
       "<div class=\"level-topline\">" +
         "<strong>" + level.title + "</strong>" +
-        "<span class=\"level-state\">" + (level.ready_to_move_on ? "Ready" : "Open") + "</span>" +
+        completionMark +
       "</div>" +
       "<div class=\"level-summary\">" + level.summary + "</div>" +
       "<div class=\"level-progress\">" + level.correct_count + "/" + level.correct_target + " correct</div>";

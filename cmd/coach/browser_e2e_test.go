@@ -66,6 +66,8 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 		assertAssessmentContract(t, tab)
 		waitForCondition(t, tab, `document.getElementById("title").textContent.trim() === "Classify the traces as slow or healthy, then name the responsible service and failure mode."`)
 		waitForCondition(t, tab, `document.getElementById("objective").textContent.trim() === ""`)
+		waitForCondition(t, tab, `document.querySelector('#levels .level-button:nth-child(1) .level-complete') !== null`)
+		waitForCondition(t, tab, `!document.getElementById("levels").textContent.includes("OPEN") && !document.getElementById("levels").textContent.includes("READY")`)
 		waitForCondition(t, tab, `document.getElementById("open-jaeger").classList.contains("hidden")`)
 		waitForCondition(t, tab, `document.getElementById("reference-trace").classList.contains("hidden")`)
 		waitForCondition(t, tab, `document.getElementById("assessment-prompt").classList.contains("hidden")`)

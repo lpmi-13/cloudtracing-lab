@@ -39,7 +39,7 @@ Supporting services:
 - the coach UI now includes lightweight progressive hints that help learners move from the entry span to the next service layer without revealing the answer
 - the application tier covers four trace patterns: broad search queries, inventory N+1 work, payment lock waits, and expensive order-history sorts
 - the optional shop UI remains available for manual storefront traffic, but the core activity is now coach + Jaeger
-- the local path is `bash scripts/up.sh`, which tears the lab down, rebuilds the local app images, pushes them to the trusted registry, applies the local overlay, and waits for rollout
+- the local path is `bash scripts/up.sh`, which tears the lab down, rebuilds the local app images, pushes them to the trusted registry, applies the local overlay, waits for rollout, and ensures the coach hot-reload UI is running
 - the remote path is `bash scripts/publish-ghcr.sh` plus `bash scripts/deploy-remote.sh`, or simply `bash scripts/up-remote.sh`
 - the preloaded VM/rootfs path is still available for iximiuz-style playgrounds and fast-start environments
 - Jaeger now runs as a pinned backend image plus a separately built, pinned `jaeger-ui` sidecar served by Caddy, so UI updates can land independently of the backend image
@@ -59,7 +59,7 @@ Initial faults:
 
 1. The coach UI picks a scenario at random and automatically seeds five fresh traces into every learner-facing endpoint.
 2. The learner opens Jaeger, filters to the focus service and operation from the coach, and inspects the newest matching trace.
-3. The learner submits the suspected culprit service and issue type in the coach UI.
+3. The learner submits the suspected responsible service and issue type in the coach UI.
 4. If the diagnosis is wrong, the current scenario stays in place so the learner can keep inspecting the latest trace or start a new scenario manually.
 5. If the diagnosis is correct, the coach UI immediately advances to a new random scenario and seeds the next batch automatically.
 6. The loop continues until the learner decides to stop.
@@ -84,8 +84,9 @@ Use this as the quick "which script do I run?" reference:
 
 | Script | Run it when | What it does and why it exists |
 | --- | --- | --- |
-| `bash scripts/up.sh` | You want the normal one-command local bring-up. | Runs the full local flow: build app images, push them to the trusted local registry, deploy the local overlay, bind the local HTTP services to `localhost`, and wait for rollout. This is the default local entry point. |
+| `bash scripts/up.sh` | You want the normal one-command local bring-up. | Runs the full local flow: build app images, push them to the trusted local registry, deploy the local overlay, bind the local HTTP services to `localhost`, wait for rollout, and ensure the coach UI hot-reload server is running on `http://127.0.0.1:5173`. This is the default local entry point. |
 | `bash scripts/refresh-local-app.sh coach` | You changed one or a few app images and want the fastest local refresh without tearing the namespace down. | Rebuilds only the selected app images, pushes only those tags to the local registry, and restarts only the matching deployments. This exists for quick iteration on things like the coach UI or the custom Jaeger UI image. |
+| `bash scripts/coach-ui-dev.sh` | You are iterating on the coach frontend and want hot reload instead of rebuilding the coach image after every edit. | Starts a local Vite dev server for the coach UI on `http://127.0.0.1:5173`, proxies `/api/*` and `/favicon.ico` to the running coach backend on `http://127.0.0.1:9000` by default, and installs the small local UI toolchain on first run if needed. |
 | `bash scripts/down.sh` | You want to remove the local lab before a clean retry or before leaving the cluster idle. | Deletes the `trace-lab` namespace and waits for it to disappear, so the next local run starts from a clean slate. |
 | `bash scripts/build-images.sh` | You changed app code or Dockerfiles and need fresh first-party images. | Builds the Go, Python, and custom Jaeger UI images as `cloudtracing/*:${IMAGE_TAG}` for the normal local flow, using the script's default local tag when `IMAGE_TAG` is unset. This exists so image creation is consistent across local, remote, and rootfs flows. |
 | `bash scripts/load-images.sh` | You built local images and want `k3s` to be able to pull them. | Starts the local registry on `localhost:30300` if needed, then tags and pushes the app images there. We need it because local `k3s` does not read images directly from the host Docker daemon. |
@@ -112,6 +113,7 @@ That command:
 - applies the local `k3s` manifests
 - restarts the application deployments so refreshed local app images are re-pulled
 - waits for the `trace-lab` deployments to finish rolling out
+- ensures the coach UI Vite dev server is running on `http://127.0.0.1:5173`
 
 If you want to run the steps manually, use:
 
@@ -139,8 +141,31 @@ To rebuild and roll out only the Caddy-served Jaeger UI image, use:
 bash scripts/refresh-local-app.sh jaeger-ui
 ```
 
+If you are only changing the coach frontend, `bash scripts/up.sh` now starts the hot reload server automatically. If you already have the local lab running and just want to start or restart the frontend server by itself, use:
+
+```bash
+bash scripts/coach-ui-dev.sh
+```
+
+Open `http://127.0.0.1:5173` for the hot reload UI. The dev server proxies coach API and event-stream traffic to `http://127.0.0.1:9000` by default, so edits under `cmd/coach/ui` show up immediately after save.
+
+If the coach backend you want to target is running somewhere else, point the dev server at it explicitly:
+
+```bash
+COACH_BACKEND_URL=http://127.0.0.1:8080 bash scripts/coach-ui-dev.sh
+```
+
+Use `bash scripts/refresh-local-app.sh coach` when you change the coach Go backend or anything else that still requires a rebuilt container image.
+
+If you want the cluster without the hot reload server, run:
+
+```bash
+COACH_UI_AUTOSTART=0 bash scripts/up.sh
+```
+
 After the deploy completes, open:
 
+- `http://127.0.0.1:5173` for the coach hot reload UI
 - `http://localhost:9000` for the coach UI
 - `http://localhost:9002` for Jaeger
 

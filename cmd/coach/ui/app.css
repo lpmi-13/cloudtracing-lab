@@ -215,10 +215,10 @@ select {
   align-items: center;
 }
 
-.level-state {
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+.level-complete {
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .level-summary {
