@@ -522,7 +522,7 @@ function renderReferenceTrace(assessment) {
       shell.textContent = "Open Jaeger Compare and inspect what changed between the healthy and slower traces.";
       break;
     case "intermittent_failure":
-      shell.textContent = "Open the trace links below and select the failing ones.";
+      shell.textContent = "Open each trace link " + traceLinksPlacementCopy() + ", decide which requests actually fail, then select the failing traces.";
       break;
     default:
       shell.textContent = "Open Jaeger to inspect the prepared traces below.";
@@ -898,11 +898,12 @@ function render() {
   const levelOneTraceSearch = assessment.type === "trace_search_span";
   const levelTwoHealthyFaulty = assessment.type === "healthy_faulty";
   const levelThreeBeforeAfter = assessment.type === "before_after";
+  const levelFiveIntermittent = assessment.type === "intermittent_failure";
 
   document.getElementById("title").textContent = levelOneTraceSearch ? "Find the slow trace and span" : (levelTwoHealthyFaulty ? (current.objective || current.title || "") : (current.title || ""));
-  document.getElementById("objective").textContent = levelOneTraceSearch || levelTwoHealthyFaulty || levelThreeBeforeAfter ? "" : (current.objective || "");
+  document.getElementById("objective").textContent = levelOneTraceSearch || levelTwoHealthyFaulty || levelThreeBeforeAfter || levelFiveIntermittent ? "" : (current.objective || "");
   assessmentPrompt.textContent = assessment.prompt || "";
-  assessmentPrompt.classList.toggle("hidden", assessment.type === "trace_search_span" || assessment.type === "healthy_faulty" || assessment.type === "before_after" || !assessment.prompt);
+  assessmentPrompt.classList.toggle("hidden", assessment.type === "trace_search_span" || assessment.type === "healthy_faulty" || assessment.type === "before_after" || assessment.type === "intermittent_failure" || !assessment.prompt);
   document.getElementById("selected-level-title").textContent = selected ? (selected.title + " • " + selected.summary) : "Level";
   document.getElementById("selected-level-progress").textContent = selected ? (selected.correct_count + "/" + selected.correct_target + " correct") : "";
 

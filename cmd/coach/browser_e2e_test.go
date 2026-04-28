@@ -155,6 +155,9 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 		navigateCoach(t, tab, h.coach.URL)
 		waitForLevelUI(t, tab, assessmentIntermittent)
 		assertAssessmentContract(t, tab)
+		waitForCondition(t, tab, `document.getElementById("objective").textContent.trim() === ""`)
+		waitForCondition(t, tab, `document.getElementById("assessment-prompt").classList.contains("hidden")`)
+		waitForCondition(t, tab, `document.getElementById("reference-trace").textContent.includes("to the right")`)
 
 		answer := h.waitForSelectedAnswer(t)
 		setSelectValue(t, tab, "#service", answer.Service, false)
