@@ -100,19 +100,22 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 		assertAssessmentContract(t, tab)
 		waitForCondition(t, tab, `(() => {
 			const link = document.querySelector("#reference-trace a");
-			return !!link && link.textContent.includes("vs") && link.href.includes("/trace/") && link.href.includes("...");
+			return !!link && link.textContent.trim() === "Compare traces" && link.href.includes("/trace/") && link.href.includes("...");
 		})()`)
+		waitForCondition(t, tab, `document.getElementById("open-jaeger").classList.contains("hidden")`)
+		waitForCondition(t, tab, `document.getElementById("assessment-prompt").classList.contains("hidden")`)
+		waitForCondition(t, tab, `document.getElementById("selected-level-title").textContent.includes("Respond to an Elevated Latency Alert")`)
+		waitForCondition(t, tab, `document.getElementById("title").textContent.toLowerCase().includes("elevated")`)
+		waitForCondition(t, tab, `document.getElementById("before-trace") === null && document.getElementById("after-trace") === null`)
 
 		answer := h.waitForSelectedAnswer(t)
 		setSelectValue(t, tab, "#service", answer.Service, false)
+		setSelectValue(t, tab, "#issue", wrongSelectOptionValue(t, tab, "#issue", answer.Issue), false)
+		click(t, tab, "#submit")
+		waitForFeedbackContains(t, tab, "failure mode is wrong")
 		setSelectValue(t, tab, "#issue", answer.Issue, false)
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "Select a before trace before submitting.")
-
-		setSelectValue(t, tab, "#before-trace", "bogus-before", true)
-		setSelectValue(t, tab, "#after-trace", answer.AfterTraceID, false)
-		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "before trace is wrong")
+		waitForProgress(t, tab, "1/5 correct")
 	})
 
 	t.Run("level_4_span_attribute", func(t *testing.T) {
@@ -135,9 +138,10 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 		waitForFeedbackContains(t, tab, "Select the culprit span before submitting.")
 
 		setSelectValue(t, tab, "#selected-span", answer.SpanID, false)
+		waitForCondition(t, tab, `document.querySelector('label[for="selected-attribute"]').textContent.trim() === "Proof tag on culprit span"`)
 		setSelectValue(t, tab, "#selected-attribute", wrongSelectOptionValue(t, tab, "#selected-attribute", answer.AttributeID), false)
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "supporting attribute is wrong")
+		waitForFeedbackContains(t, tab, "proof tag is wrong")
 	})
 
 	t.Run("level_5_intermittent_failure", func(t *testing.T) {

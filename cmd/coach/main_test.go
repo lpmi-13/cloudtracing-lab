@@ -294,7 +294,7 @@ func TestBuildPreparedChallengeCreatesBeforeAfterCompareAssessment(t *testing.T)
 	}
 }
 
-func TestGradeSubmissionRequiresSupportingAttribute(t *testing.T) {
+func TestGradeSubmissionRequiresProofTag(t *testing.T) {
 	def := firstScenarioByLevel(t, testScenarioSet(), 4)
 	challenge, err := buildPreparedChallenge(def, traceGroups{
 		Faulty: []traceRecord{
@@ -324,7 +324,36 @@ func TestGradeSubmissionRequiresSupportingAttribute(t *testing.T) {
 		SelectedAttribute: challenge.ExpectedAttributeID,
 	})
 	if !result.Pass {
-		t.Fatalf("expected correct supporting attribute to pass, got %q", result.Message)
+		t.Fatalf("expected correct proof tag to pass, got %q", result.Message)
+	}
+}
+
+func TestBuildPreparedChallengeShowsProofTagsOnly(t *testing.T) {
+	def := firstScenarioByLevel(t, testScenarioSet(), 4)
+	challenge, err := buildPreparedChallenge(def, traceGroups{
+		Faulty: []traceRecord{
+			traceFixture("trace-attribute", def, map[string]string{
+				"lab.statement_signature":  "select pg_sleep(%s)",
+				"db.statement":             "select pg_sleep(1.2)",
+				def.AnswerKey.AttributeKey: def.AnswerKey.AttributeValue,
+			}),
+		},
+	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" }, func(string, string, []string) string { return "" })
+	if err != nil {
+		t.Fatalf("buildPreparedChallenge: %v", err)
+	}
+
+	labels := make([]string, 0, len(challenge.Public.AttributeChoices))
+	for _, option := range challenge.Public.AttributeChoices {
+		labels = append(labels, option.Label)
+	}
+
+	if !sameOrderedStrings(labels, []string{
+		"Query label: " + def.AnswerKey.SpanOperation,
+		"Statement signature: select pg_sleep(%s)",
+		"Wait checkpoint: " + def.AnswerKey.AttributeValue,
+	}) {
+		t.Fatalf("expected proof-tag labels only, got %+v", labels)
 	}
 }
 

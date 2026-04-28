@@ -33,15 +33,9 @@ func TestFeedbackUsesVisibleFieldNames(t *testing.T) {
 			unwanted: []string{"diagnosis", "trace grouping"},
 		},
 		{
-			name:     "before_after",
-			message:  beforeAfterFeedback(true, true, false, true),
-			want:     []string{"responsible service", "failure mode", "before trace"},
-			unwanted: []string{"diagnosis", "baseline trace", "comparison pair"},
-		},
-		{
 			name:     "span_attribute",
 			message:  spanAttributeFeedback(true, true, true, false),
-			want:     []string{"responsible service", "failure mode", "culprit span", "supporting attribute"},
+			want:     []string{"responsible service", "failure mode", "culprit span", "proof tag"},
 			unwanted: []string{"diagnosis", "supporting evidence"},
 		},
 		{

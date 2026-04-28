@@ -66,7 +66,7 @@ var levelBlueprints = []struct {
 }{
 	{Number: 1, Title: "Level 1", Summary: "Find the Slow Span"},
 	{Number: 2, Title: "Level 2", Summary: "Find the Slow Service With Noise"},
-	{Number: 3, Title: "Level 3", Summary: "What Changed?"},
+	{Number: 3, Title: "Level 3", Summary: "Respond to an Elevated Latency Alert"},
 	{Number: 4, Title: "Level 4", Summary: "Dig Into the Details"},
 	{Number: 5, Title: "Level 5", Summary: "Find the Intermittent Failure"},
 }

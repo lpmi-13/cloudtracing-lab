@@ -142,15 +142,13 @@ func requiredEvidenceFor(def scenario.Definition) []string {
 		return []string{
 			"Select the responsible service.",
 			"Select the failure mode.",
-			"Select one before trace from before the regression.",
-			"Select one after trace from after the change.",
 		}
 	case assessmentSpanAttribute:
 		return []string{
 			"Select the responsible service.",
 			"Select the failure mode.",
 			"Select the culprit span inside the reference trace.",
-			"Select the supporting attribute that proves the root cause.",
+			"Select the proof tag on that culprit span that proves the root cause.",
 		}
 	case assessmentIntermittent:
 		return []string{
@@ -175,9 +173,9 @@ func passConditionFor(def scenario.Definition) string {
 	case assessmentHealthyFaulty:
 		return "Full credit requires the correct responsible service, failure mode, all slow traces, and the healthy trace."
 	case assessmentBeforeAfter:
-		return "Full credit requires the correct responsible service, failure mode, one valid before trace, and one valid after trace from Jaeger Compare."
+		return "Full credit requires the correct responsible service and failure mode based on the Jaeger Compare investigation."
 	case assessmentSpanAttribute:
-		return "Full credit requires the correct responsible service, failure mode, culprit span, and supporting attribute."
+		return "Full credit requires the correct responsible service, failure mode, culprit span, and proof tag."
 	case assessmentIntermittent:
 		return "Full credit requires the correct responsible service, failure mode, and every failing trace from the intermittent set."
 	default:
@@ -194,7 +192,7 @@ func startGuideFor(def scenario.Definition) string {
 	case 3:
 		return fmt.Sprintf("Open Jaeger Compare with one before trace and one after trace for %s.", def.Route)
 	case 4:
-		return fmt.Sprintf("Open the reference trace for %s, find the culprit span, then prove it with one attribute.", def.Route)
+		return fmt.Sprintf("Open the reference trace for %s, find the culprit span, then prove it with one proof tag.", def.Route)
 	case 5:
 		return fmt.Sprintf("Open the trace links for %s and select the requests that actually fail.", def.Route)
 	default:
@@ -375,8 +373,6 @@ func buildPreparedChallenge(
 		if !ok {
 			return nil, fmt.Errorf("culprit span missing from reference trace for %s", def.ID)
 		}
-		attributeChoicesBySpan := attributeChoicesBySpanForTrace(reference)
-		attributeChoices := attributeChoicesBySpan[expectedSpanID]
 		expectedAttributeID := attributeChoiceID(def.AnswerKey.AttributeKey, def.AnswerKey.AttributeValue)
 		if expectedAttributeID == "=" {
 			expectedAttributeID = attributeChoiceID(def.AnswerKey.SpanAttributeKey, def.AnswerKey.SpanAttributeValue)
@@ -384,6 +380,8 @@ func buildPreparedChallenge(
 		if expectedAttributeID == "=" {
 			return nil, fmt.Errorf("no attribute answer key configured for %s", def.ID)
 		}
+		attributeChoicesBySpan := attributeChoicesBySpanForTrace(reference, expectedAttributeID)
+		attributeChoices := attributeChoicesBySpan[expectedSpanID]
 		if _, ok := culpritSpan.Tags[def.AnswerKey.AttributeKey]; def.AnswerKey.AttributeKey != "" && !ok {
 			return nil, fmt.Errorf("culprit span for %s does not include attribute %q", def.ID, def.AnswerKey.AttributeKey)
 		}
@@ -468,15 +466,13 @@ func gradeSubmission(def scenario.Definition, challenge *preparedChallenge, req 
 		return gradeResult{Pass: false, Message: mixedTraceFeedback(serviceOK, issueOK, faultyOK, healthyOK)}
 
 	case assessmentBeforeAfter:
-		beforeOK := containsID(challenge.ExpectedBeforeTraceIDs, req.BeforeTraceID)
-		afterOK := containsID(challenge.ExpectedAfterTraceIDs, req.AfterTraceID)
-		if serviceOK && issueOK && beforeOK && afterOK {
+		if serviceOK && issueOK {
 			return gradeResult{
 				Pass:    true,
-				Message: "Correct. The responsible service, failure mode, before trace, and after trace all match the intended comparison.",
+				Message: "Correct. The responsible service and failure mode match what changed in Jaeger Compare.",
 			}
 		}
-		return gradeResult{Pass: false, Message: beforeAfterFeedback(serviceOK, issueOK, beforeOK, afterOK)}
+		return gradeResult{Pass: false, Message: serviceFailureModeFeedback(serviceOK, issueOK) + " Recheck what changed in Jaeger Compare."}
 
 	case assessmentSpanAttribute:
 		spanOK := req.SelectedSpan == challenge.ExpectedSpanID
@@ -484,7 +480,7 @@ func gradeSubmission(def scenario.Definition, challenge *preparedChallenge, req 
 		if serviceOK && issueOK && spanOK && attributeOK {
 			return gradeResult{
 				Pass:    true,
-				Message: "Correct. The responsible service, failure mode, culprit span, and supporting attribute all line up.",
+				Message: "Correct. The responsible service, failure mode, culprit span, and proof tag all line up.",
 			}
 		}
 		return gradeResult{Pass: false, Message: spanAttributeFeedback(serviceOK, issueOK, spanOK, attributeOK)}
@@ -541,29 +537,16 @@ func mixedTraceFeedback(serviceOK, issueOK, faultyOK, healthyOK bool) string {
 	}
 }
 
-func beforeAfterFeedback(serviceOK, issueOK, beforeOK, afterOK bool) string {
-	switch {
-	case serviceOK && issueOK && !beforeOK && afterOK:
-		return "The responsible service and failure mode are right, but the before trace is wrong. Pick a trace from before the regression window."
-	case serviceOK && issueOK && beforeOK && !afterOK:
-		return "The responsible service and failure mode are right, but the after trace is wrong. Pick one of the slow traces from after the change."
-	case serviceOK && issueOK:
-		return "The responsible service and failure mode are right, but the before trace and after trace are wrong. Recheck which trace belongs to each side of the change."
-	default:
-		return serviceFailureModeFeedback(serviceOK, issueOK) + " Recheck the before trace and after trace selections."
-	}
-}
-
 func spanAttributeFeedback(serviceOK, issueOK, spanOK, attributeOK bool) string {
 	switch {
 	case serviceOK && issueOK && !spanOK && attributeOK:
-		return "The supporting attribute is right, but the culprit span is wrong. Reopen the reference trace and identify the exact span carrying that attribute."
+		return "The proof tag is right, but the culprit span is wrong. Reopen the reference trace and identify the exact span carrying that proof."
 	case serviceOK && issueOK && spanOK && !attributeOK:
-		return "The responsible service, failure mode, and culprit span are right, but the supporting attribute is wrong. Choose the attribute that proves the root cause."
+		return "The responsible service, failure mode, and culprit span are right, but the proof tag is wrong. Choose the tag on that span that most specifically proves the root cause."
 	case serviceOK && issueOK:
-		return "The responsible service and failure mode are right, but the culprit span and supporting attribute are both wrong. Recheck both fields."
+		return "The responsible service and failure mode are right, but the culprit span and proof tag are both wrong. Recheck both fields."
 	default:
-		return serviceFailureModeFeedback(serviceOK, issueOK) + " Recheck the culprit span and supporting attribute."
+		return serviceFailureModeFeedback(serviceOK, issueOK) + " Recheck the culprit span and proof tag."
 	}
 }
 
@@ -639,7 +622,7 @@ func stableShuffleTraceRecords(records []traceRecord) []traceRecord {
 
 func compareLinkOption(beforeID, afterID string, cohortIDs []string, compareURL func(string, string, []string) string) *publicLinkOption {
 	return &publicLinkOption{
-		Label: fmt.Sprintf("trace %s vs trace %s", traceDisplayID(beforeID), traceDisplayID(afterID)),
+		Label: "Compare traces",
 		URL:   compareURL(beforeID, afterID, cohortIDs),
 	}
 }
@@ -748,7 +731,7 @@ func rotateSpanChoices(options []publicSpanOption, seed string) []publicSpanOpti
 	return append(rotated[offset:], rotated[:offset]...)
 }
 
-func attributeChoicesBySpanForTrace(trace traceRecord) map[string][]publicAttributeOption {
+func attributeChoicesBySpanForTrace(trace traceRecord, requiredAttributeID string) map[string][]publicAttributeOption {
 	options := make(map[string][]publicAttributeOption, len(trace.Spans))
 
 	for _, span := range trace.Spans {
@@ -756,17 +739,17 @@ func attributeChoicesBySpanForTrace(trace traceRecord) map[string][]publicAttrib
 		seen := map[string]struct{}{}
 		choices := make([]publicAttributeOption, 0, len(span.Tags))
 		for key, value := range span.Tags {
-			if !isAssessmentAttribute(key) {
+			id := attributeChoiceID(key, value)
+			if !isVisibleProofTag(key, id, requiredAttributeID) {
 				continue
 			}
-			id := attributeChoiceID(key, value)
 			if _, ok := seen[id]; ok {
 				continue
 			}
 			seen[id] = struct{}{}
 			choices = append(choices, publicAttributeOption{
 				ID:    id,
-				Label: fmt.Sprintf("%s = %s", key, value),
+				Label: proofTagLabel(key, value),
 			})
 		}
 		sort.Slice(choices, func(i, j int) bool {
@@ -780,8 +763,42 @@ func attributeChoicesBySpanForTrace(trace traceRecord) map[string][]publicAttrib
 	return options
 }
 
-func isAssessmentAttribute(key string) bool {
-	return strings.HasPrefix(key, "lab.") || key == "db.statement" || key == "db.system"
+func isVisibleProofTag(key, id, requiredAttributeID string) bool {
+	return strings.HasPrefix(key, "lab.") || id == requiredAttributeID
+}
+
+func proofTagLabel(key, value string) string {
+	switch key {
+	case "lab.query_label":
+		return "Query label: " + value
+	case "lab.statement_signature":
+		return "Statement signature: " + value
+	case "lab.wait_checkpoint":
+		return "Wait checkpoint: " + value
+	case "db.statement":
+		return "Statement text: " + value
+	case "db.system":
+		return "Database system: " + value
+	default:
+		return humanizeAttributeKey(key) + ": " + value
+	}
+}
+
+func humanizeAttributeKey(key string) string {
+	key = strings.TrimPrefix(key, "lab.")
+	key = strings.ReplaceAll(key, ".", " ")
+	key = strings.ReplaceAll(key, "_", " ")
+	parts := strings.Fields(key)
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		parts[i] = strings.ToUpper(part[:1]) + part[1:]
+	}
+	if len(parts) == 0 {
+		return "Attribute"
+	}
+	return strings.Join(parts, " ")
 }
 
 func traceIDs(records []traceRecord) []string {

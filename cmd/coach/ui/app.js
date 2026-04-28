@@ -13,12 +13,12 @@ const levelIntroContent = {
     objective: "Practice classifying mixed traces and identifying the responsible service behind the slow ones."
   },
   3: {
-    scene: "A rollout just finished and the team wants to know whether it changed real user behavior or whether the slowdown is just noise. You compare traces from before and after the change to understand what shifted in the request path.",
-    objective: "Practice explaining what changed by using Jaeger Compare on before-and-after traces."
+    scene: "An alert says latency has climbed after a recent change. You compare a healthy before trace against a slower after trace so you can explain what regressed before the team chases the wrong service.",
+    objective: "Practice responding to an elevated latency alert by using Jaeger Compare to explain what changed."
   },
   4: {
-    scene: "You think you know which service is responsible, but now you need evidence strong enough to convince the rest of the team in a review or incident thread. That means finding the exact span and the concrete attribute that proves why it is slow.",
-    objective: "Practice proving the root cause with span-level evidence instead of relying on a hunch."
+    scene: "You think you know which service is responsible, but now you need evidence strong enough to convince the rest of the team in a review or incident thread. That means finding the exact span and the proof tag on that span that most specifically names the slow work or wait condition.",
+    objective: "Practice proving the root cause with the culprit span and its proof tag instead of relying on a hunch."
   },
   5: {
     scene: "You are helping during an on-call incident where the failure is intermittent. Not every request is broken, and rushing to a conclusion could send the team in the wrong direction. You need to isolate the traces that actually show the failure and identify what they have in common.",
@@ -59,7 +59,7 @@ function renderJaegerLink() {
   const link = document.getElementById("open-jaeger");
   const href = coachState.jaeger_ui_url || "";
   const type = currentAssessment().type;
-  const hidden = !href || type === "trace_search_span" || type === "healthy_faulty";
+  const hidden = !href || type === "trace_search_span" || type === "healthy_faulty" || type === "before_after";
 
   link.href = href || "#";
   link.classList.toggle("hidden", hidden);
@@ -457,7 +457,7 @@ function renderReferenceTrace(assessment) {
 
   if (assessment.compare_link) {
     const intro = document.createElement("span");
-    intro.textContent = "Open Jaeger Compare with a prepared before/after pair:";
+    intro.textContent = "Open Jaeger Compare:";
     shell.appendChild(intro);
 
     if (assessment.compare_link.url) {
@@ -519,7 +519,7 @@ function renderReferenceTrace(assessment) {
       shell.textContent = "Open each trace link " + traceLinksPlacementCopy() + ", decide which ones are slow or healthy, then classify each trace once.";
       break;
     case "before_after":
-      shell.textContent = "Open Jaeger Compare with one before trace and one after trace from the candidate lists below.";
+      shell.textContent = "Open Jaeger Compare and inspect what changed between the healthy and slower traces.";
       break;
     case "intermittent_failure":
       shell.textContent = "Open the trace links below and select the failing ones.";
@@ -785,10 +785,6 @@ function renderAssessmentFields(force) {
       appendTraceClassifier(shell, assessment.trace_choices, previousState.traceRoles);
       break;
     case "before_after":
-      appendSelect(shell, "before-trace", "Before trace", assessment.before_trace_choices || [], "Select the before trace");
-      appendSelect(shell, "after-trace", "After trace", assessment.after_trace_choices || [], "Select the after trace");
-      restoreSelectValue("before-trace", previousState.beforeTraceID);
-      restoreSelectValue("after-trace", previousState.afterTraceID);
       break;
     case "span_attribute":
       if (!selectedServiceValue()) {
@@ -798,10 +794,10 @@ function renderAssessmentFields(force) {
       appendSelect(shell, "selected-span", "Culprit span", spanChoicesForAssessment(assessment), "Select the span");
       restoreSelectValue("selected-span", previousState.selectedSpanID);
       if (!selectedSpanValue()) {
-        appendNote(shell, "Select the culprit span to load its supporting attributes.");
+        appendNote(shell, "Select the culprit span to load its proof tags.");
         break;
       }
-      appendSelect(shell, "selected-attribute", "Supporting attribute", attributeChoicesForAssessment(assessment), "Select the attribute");
+      appendSelect(shell, "selected-attribute", "Proof tag on culprit span", attributeChoicesForAssessment(assessment), "Select the proof tag");
       restoreSelectValue("selected-attribute", previousState.selectedAttributeID);
       break;
     case "intermittent_failure":
@@ -846,10 +842,6 @@ function assessmentPayload(assessment) {
       payload.healthy_trace_ids = Object.keys(payload.trace_roles).filter((traceID) => payload.trace_roles[traceID] === "healthy");
       payload.healthy_trace_id = payload.healthy_trace_ids.length === 1 ? payload.healthy_trace_ids[0] : "";
       break;
-    case "before_after":
-      payload.before_trace_id = document.getElementById("before-trace")?.value || "";
-      payload.after_trace_id = document.getElementById("after-trace")?.value || "";
-      break;
     case "span_attribute":
       payload.selected_span = document.getElementById("selected-span")?.value || "";
       payload.selected_attribute = document.getElementById("selected-attribute")?.value || "";
@@ -885,19 +877,11 @@ function validateAssessment(assessment, payload) {
         return "Choose only one healthy trace before submitting.";
       }
       return payload.faulty_trace_ids.length > 0 ? "" : "Select every slow trace before submitting.";
-    case "before_after":
-      if (!payload.before_trace_id) {
-        return "Select a before trace before submitting.";
-      }
-      if (payload.before_trace_id === payload.after_trace_id) {
-        return "Select two different traces before submitting.";
-      }
-      return payload.after_trace_id ? "" : "Select an after trace before submitting.";
     case "span_attribute":
       if (!payload.selected_span) {
         return "Select the culprit span before submitting.";
       }
-      return payload.selected_attribute ? "" : "Select the supporting attribute before submitting.";
+      return payload.selected_attribute ? "" : "Select the proof tag before submitting.";
     case "intermittent_failure":
       return payload.failing_trace_ids.length > 0 ? "" : "Select every failing trace before submitting.";
     default:
@@ -913,11 +897,12 @@ function render() {
   const assessmentPrompt = document.getElementById("assessment-prompt");
   const levelOneTraceSearch = assessment.type === "trace_search_span";
   const levelTwoHealthyFaulty = assessment.type === "healthy_faulty";
+  const levelThreeBeforeAfter = assessment.type === "before_after";
 
   document.getElementById("title").textContent = levelOneTraceSearch ? "Find the slow trace and span" : (levelTwoHealthyFaulty ? (current.objective || current.title || "") : (current.title || ""));
-  document.getElementById("objective").textContent = levelOneTraceSearch || levelTwoHealthyFaulty ? "" : (current.objective || "");
+  document.getElementById("objective").textContent = levelOneTraceSearch || levelTwoHealthyFaulty || levelThreeBeforeAfter ? "" : (current.objective || "");
   assessmentPrompt.textContent = assessment.prompt || "";
-  assessmentPrompt.classList.toggle("hidden", assessment.type === "trace_search_span" || assessment.type === "healthy_faulty" || !assessment.prompt);
+  assessmentPrompt.classList.toggle("hidden", assessment.type === "trace_search_span" || assessment.type === "healthy_faulty" || assessment.type === "before_after" || !assessment.prompt);
   document.getElementById("selected-level-title").textContent = selected ? (selected.title + " • " + selected.summary) : "Level";
   document.getElementById("selected-level-progress").textContent = selected ? (selected.correct_count + "/" + selected.correct_target + " correct") : "";
 
