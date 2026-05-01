@@ -554,6 +554,60 @@ func TestRoutesServeCoachUIAssets(t *testing.T) {
 	}
 }
 
+func TestRoutesProxyJaegerUnderSubpath(t *testing.T) {
+	var gotPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<!doctype html><base href="/" data-inject-target="BASE_URL" />`))
+	}))
+	defer upstream.Close()
+
+	s := newTestCoachServer(t, testScenarioSet())
+	s.jaegerProxyURL = upstream.URL
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/jaeger/trace/abc123", nil)
+	s.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body %q", rec.Code, rec.Body.String())
+	}
+	if gotPath != "/trace/abc123" {
+		t.Fatalf("expected proxied path /trace/abc123, got %q", gotPath)
+	}
+	if !strings.Contains(rec.Body.String(), `<base href="/jaeger/" data-inject-target="BASE_URL" />`) {
+		t.Fatalf("expected proxied HTML base to point at /jaeger/, got %q", rec.Body.String())
+	}
+}
+
+func TestRoutesProxyJaegerAPIWithoutRewritingJSON(t *testing.T) {
+	var gotPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	s := newTestCoachServer(t, testScenarioSet())
+	s.jaegerProxyURL = upstream.URL
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/jaeger/api/traces?service=shop-web", nil)
+	s.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body %q", rec.Code, rec.Body.String())
+	}
+	if gotPath != "/api/traces" {
+		t.Fatalf("expected proxied API path /api/traces, got %q", gotPath)
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"ok":true}` {
+		t.Fatalf("expected proxied JSON body to remain unchanged, got %q", got)
+	}
+}
+
 func TestPickRandomForLevelDifferentVariantPrefersOtherVariantGroup(t *testing.T) {
 	s := &coachServer{
 		levels: []levelDefinition{

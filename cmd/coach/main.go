@@ -20,6 +20,7 @@ import (
 type coachServer struct {
 	client              *http.Client
 	jaegerUIURL         string
+	jaegerProxyURL      string
 	jaegerQueryURL      string
 	jaegerQueryMaxLimit int
 	webURL              string
@@ -97,6 +98,10 @@ func main() {
 	s := &coachServer{
 		client:      &http.Client{Timeout: 10 * time.Second},
 		jaegerUIURL: strings.TrimRight(defaultEnv("JAEGER_UI_URL", ""), "/"),
+		jaegerProxyURL: strings.TrimRight(defaultEnv(
+			"JAEGER_PROXY_URL",
+			"",
+		), "/"),
 		jaegerQueryURL: strings.TrimRight(defaultEnv(
 			"JAEGER_QUERY_URL",
 			defaultEnv("JAEGER_UI_URL", ""),
@@ -120,6 +125,10 @@ func main() {
 func (s *coachServer) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.HandlerFunc(s.index))
+	if s.jaegerProxyURL != "" {
+		mux.Handle("/jaeger", s.jaegerProxyHandler())
+		mux.Handle("/jaeger/", s.jaegerProxyHandler())
+	}
 	mux.Handle("/app.css", http.HandlerFunc(serveCoachCSS))
 	mux.Handle("/app.js", http.HandlerFunc(serveCoachJS))
 	mux.Handle("/api/state", http.HandlerFunc(s.stateSnapshot))

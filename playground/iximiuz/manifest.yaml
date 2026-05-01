@@ -21,7 +21,6 @@ playground:
 
                 Public tabs:
                 - coach
-                - shop
                 - jaeger
 
                 Useful local endpoints from the terminal:
@@ -29,7 +28,7 @@ playground:
                 - http://127.0.0.1:30081
                 - http://127.0.0.1:30686
           drives:
-            - source: oci://ghcr.io/lpmi-13/cloudtracing-k3s-rootfs:v6
+            - source: oci://ghcr.io/lpmi-13/cloudtracing-k3s-rootfs:v7
               mount: /
               size: 30GiB
           network:
@@ -40,21 +39,11 @@ playground:
             cpuCount: 4
             ramSize: 8GiB
     tabs:
-        - id: terminal-cplane-01
-          kind: terminal
-          name: cplane-01
-          machine: cplane-01
         - id: http-port-trace-coach
           kind: http-port
           name: coach
           machine: cplane-01
           number: 30080
-          access: public
-        - id: http-port-trace-shop
-          kind: http-port
-          name: shop
-          machine: cplane-01
-          number: 30081
           access: public
         - id: http-port-trace-jaeger
           kind: http-port

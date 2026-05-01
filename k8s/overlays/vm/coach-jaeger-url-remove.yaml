@@ -9,4 +9,4 @@ spec:
         - name: coach
           env:
             - name: JAEGER_UI_URL
-              $patch: delete
+              value: /jaeger

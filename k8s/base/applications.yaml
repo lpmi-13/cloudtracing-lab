@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: catalog-api
-          image: cloudtracing/catalog:v6
+          image: cloudtracing/catalog:v7
           imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_DSN
@@ -71,7 +71,7 @@ spec:
     spec:
       containers:
         - name: inventory-api
-          image: cloudtracing/inventory:v6
+          image: cloudtracing/inventory:v7
           imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_DSN
@@ -124,7 +124,7 @@ spec:
     spec:
       containers:
         - name: orders-api
-          image: cloudtracing/orders:v6
+          image: cloudtracing/orders:v7
           imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_DSN
@@ -177,7 +177,7 @@ spec:
     spec:
       containers:
         - name: payments-api
-          image: cloudtracing/payments:v6
+          image: cloudtracing/payments:v7
           imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_DSN
@@ -230,7 +230,7 @@ spec:
     spec:
       containers:
         - name: edge-api
-          image: cloudtracing/edge:v6
+          image: cloudtracing/edge:v7
           imagePullPolicy: IfNotPresent
           env:
             - name: CATALOG_URL
@@ -279,7 +279,7 @@ spec:
     spec:
       containers:
         - name: shop-web
-          image: cloudtracing/shop-web:v6
+          image: cloudtracing/shop-web:v7
           imagePullPolicy: IfNotPresent
           env:
             - name: EDGE_URL
@@ -322,9 +322,11 @@ spec:
     spec:
       containers:
         - name: coach
-          image: cloudtracing/coach:v6
+          image: cloudtracing/coach:v7
           imagePullPolicy: IfNotPresent
           env:
+            - name: JAEGER_PROXY_URL
+              value: http://$(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_UI)
             - name: JAEGER_QUERY_URL
               value: http://$(JAEGER_SERVICE_HOST):$(JAEGER_SERVICE_PORT_QUERY_API)
             - name: JAEGER_QUERY_MAX_LIMIT
