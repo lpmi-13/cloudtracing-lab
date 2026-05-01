@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-readonly DEFAULT_FIRST_PARTY_IMAGE_TAG="v5"
-readonly DEFAULT_IXIMIUZ_ROOTFS_IMAGE="ghcr.io/lpmi-13/cloudtracing-k3s-rootfs:v5"
+readonly DEFAULT_FIRST_PARTY_IMAGE_TAG="v6"
+readonly DEFAULT_IXIMIUZ_ROOTFS_IMAGE="ghcr.io/lpmi-13/cloudtracing-k3s-rootfs:v6"
 
 readonly POSTGRES_IMAGE_REPO="postgres"
 readonly POSTGRES_IMAGE_TAG="17.4-alpine"

@@ -39,7 +39,7 @@ spec:
         - name: jaeger-ui
           # Jaeger UI release v2.17.0 maps to jaegertracing/jaeger-ui commit
           # 4e887dcec50fb9f7b675fb4619ea8e3fb4c0447f.
-          image: cloudtracing/jaeger-ui:v5
+          image: cloudtracing/jaeger-ui:v6
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 16686

@@ -29,7 +29,7 @@ playground:
                 - http://127.0.0.1:30081
                 - http://127.0.0.1:30686
           drives:
-            - source: oci://ghcr.io/lpmi-13/cloudtracing-k3s-rootfs:v5
+            - source: oci://ghcr.io/lpmi-13/cloudtracing-k3s-rootfs:v6
               mount: /
               size: 30GiB
           network:
