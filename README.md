@@ -1,5 +1,7 @@
 # Cloud Tracing Lab
 
+Running at [iximiuz Labs](https://labs.iximiuz.com/playgrounds/cloud-tracing-lab-1a132e9c).
+
 ![guided UI](./images/coach-ui.png)
 
 This repo scaffolds a deliberate-practice activity for trace-driven incident diagnosis in a realistic local `k3s` environment.
