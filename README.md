@@ -1,5 +1,7 @@
 # Cloud Tracing Lab
 
+![guided UI](./images/coach-ui.png)
+
 This repo scaffolds a deliberate-practice activity for trace-driven incident diagnosis in a realistic local `k3s` environment.
 
 The initial MVP is built around:
@@ -193,6 +195,24 @@ The local overlay also binds the internal HTTP services to fixed loopback ports 
 5. If you get stuck moving from the entry span into the real suspect branch, use the `Need a hint?` panel in the coach UI for a minimal nudge.
 6. Go back to the coach UI and submit the diagnosis plus whatever evidence the current level requires. If you are wrong, the current scenario stays in place; if you want a fresh batch, click `New Scenario`.
 7. Repeat until you solve it or move to a new scenario.
+
+### What You See in Jaeger
+
+Browse the trace list to filter to the focus service and pick the newest matching activity:
+
+![trace list view](./images/visualize-traces.png)
+
+Drill into a single trace to walk the span tree from the web tier down through the backing services:
+
+![span tree view](./images/visualize-spans.png)
+
+Inspect span attributes to confirm where the real slowdown or failure is happening:
+
+![span attribute detail](./images/trace-attributes.png)
+
+Compare traces side by side when the current activity batch needs context against a healthier baseline:
+
+![trace comparison](./images/compare-traces.png)
 
 Jaeger now keeps multiple recent activity batches in memory. The coach tags every generated batch and fetches only the tagged traces it just seeded, so the lab can retain a broader working set without blurring the evidence for the current challenge.
 
