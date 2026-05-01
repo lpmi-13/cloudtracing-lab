@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -76,14 +77,32 @@ func WriteJSON(w http.ResponseWriter, status int, body any) {
 }
 
 func QuerySpan(ctx context.Context, tracer trace.Tracer, label, stmt string, latency time.Duration, exec func(context.Context) error) error {
-	ctx, span := tracer.Start(ctx, label,
-		trace.WithAttributes(
-			attribute.String("db.system", "postgresql"),
-			attribute.String("db.statement", stmt),
-			attribute.String("lab.query_label", label),
-			attribute.String("lab.statement_signature", statementSignature(stmt)),
-		),
-	)
+	return QuerySpanWithTags(ctx, tracer, label, stmt, latency, nil, exec)
+}
+
+func WorkSpan(ctx context.Context, tracer trace.Tracer, label string, tags map[string]string, fn func(context.Context) error) error {
+	attrs := StringAttributes(tags)
+	ctx, span := tracer.Start(ctx, label, trace.WithAttributes(attrs...))
+	defer span.End()
+
+	if err := fn(ctx); err != nil {
+		span.RecordError(err)
+		return err
+	}
+
+	return nil
+}
+
+func QuerySpanWithTags(ctx context.Context, tracer trace.Tracer, label, stmt string, latency time.Duration, tags map[string]string, exec func(context.Context) error) error {
+	attrs := []attribute.KeyValue{
+		attribute.String("db.system", "postgresql"),
+		attribute.String("db.statement", stmt),
+		attribute.String("lab.query_label", label),
+		attribute.String("lab.statement_signature", statementSignature(stmt)),
+	}
+	attrs = append(attrs, StringAttributes(tags)...)
+
+	ctx, span := tracer.Start(ctx, label, trace.WithAttributes(attrs...))
 	defer span.End()
 
 	if latency > 0 {
@@ -96,6 +115,24 @@ func QuerySpan(ctx context.Context, tracer trace.Tracer, label, stmt string, lat
 	}
 
 	return nil
+}
+
+func StringAttributes(tags map[string]string) []attribute.KeyValue {
+	if len(tags) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(tags))
+	for key := range tags {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	attrs := make([]attribute.KeyValue, 0, len(keys))
+	for _, key := range keys {
+		attrs = append(attrs, attribute.String(key, tags[key]))
+	}
+	return attrs
 }
 
 func statementSignature(stmt string) string {

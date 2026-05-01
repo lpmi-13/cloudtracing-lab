@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Trace Coach</title>
-    <meta name="description" content="Level-based trace practice with self-selected starting points, five-correct progress tracking, and synchronized state across every open coach tab.">
+    <meta name="description" content="Three-level trace practice with self-selected starting points, five-correct progress tracking, and synchronized state across every open coach tab.">
     <link rel="icon" href="/favicon.ico">
     <link rel="stylesheet" href="/app.css">
   </head>
@@ -89,19 +89,20 @@
       <div class="panel onboarding-modal">
         <div id="skill-step-choice" class="onboarding-step">
           <div class="eyebrow">Start Point</div>
-          <h2 id="skill-modal-title">How familiar are you with distributed tracing?</h2>
+          <h2 id="skill-modal-title">Choose a starting point for distributed tracing practice</h2>
+          <p class="muted">Pick the level that best matches your current experience. You can start with a single trace, jump to compare work, or begin with changed-setting diagnosis.</p>
           <div class="skill-options">
             <button class="skill-option" type="button" data-skill-choice="no-experience" data-level="1">
               <strong>No experience</strong>
-              <span>Start with reading one trace and finding the slow span.</span>
+              <span>Start with one trace and learn how to spot the slow span.</span>
             </button>
-            <button class="skill-option" type="button" data-skill-choice="familiar" data-level="3">
+            <button class="skill-option" type="button" data-skill-choice="familiar" data-level="2">
               <strong>Familiar</strong>
-              <span>Start with before-and-after trace comparisons.</span>
+              <span>Start with comparing a healthy trace against a slower one to find the responsible span.</span>
             </button>
-            <button class="skill-option" type="button" data-skill-choice="expert" data-level="5">
-              <strong>Expert</strong>
-              <span>Start with intermittent failures and noisy evidence.</span>
+            <button class="skill-option" type="button" data-skill-choice="comfortable" data-level="3">
+              <strong>Comfortable</strong>
+              <span>Start with compare-based diagnosis and identify which changed setting to revert.</span>
             </button>
           </div>
           <p id="skill-modal-error" class="modal-error hidden"></p>
@@ -109,7 +110,7 @@
         <div id="skill-step-explainer" class="onboarding-step hidden">
           <div class="eyebrow">Flexible Practice</div>
           <h2>Move between levels any time</h2>
-          <p class="muted">All levels are available from the progression bar at the top. If the starting point feels too easy or too hard, choose a different level or revisit a specific skill whenever you want more practice.</p>
+          <p class="muted">All three levels are available from the progression bar at the top. If the starting point feels too easy or too hard, switch levels any time or revisit a specific skill whenever you want more practice.</p>
           <div class="actions">
             <button id="skill-modal-close" type="button">Start Practicing</button>
           </div>

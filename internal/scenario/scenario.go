@@ -7,11 +7,13 @@ import (
 )
 
 type FaultSpec struct {
-	Mode       string `json:"mode"`
-	LatencyMS  int    `json:"latency_ms"`
-	Repeat     int    `json:"repeat"`
-	QueryLabel string `json:"query_label"`
-	QueryText  string `json:"query_text"`
+	Mode        string `json:"mode"`
+	LatencyMS   int    `json:"latency_ms"`
+	Repeat      int    `json:"repeat"`
+	QueryLabel  string `json:"query_label"`
+	QueryText   string `json:"query_text"`
+	ConfigKey   string `json:"config_key"`
+	ConfigValue string `json:"config_value"`
 }
 
 type AnswerKey struct {

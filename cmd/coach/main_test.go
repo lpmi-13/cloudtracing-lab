@@ -25,8 +25,8 @@ func TestRealScenarioCatalogBuildsLevels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildLevels: %v", err)
 	}
-	if len(levels) != 5 {
-		t.Fatalf("expected 5 levels, got %d", len(levels))
+	if len(levels) != 3 {
+		t.Fatalf("expected 3 levels, got %d", len(levels))
 	}
 	for _, level := range levels {
 		if len(level.Scenarios) < 3 {
@@ -128,47 +128,84 @@ func TestBuildPreparedChallengeNormalizesTraceSearchSpanChoiceCounts(t *testing.
 	}
 }
 
-func TestBuildPreparedChallengeMixedTraceOrderDoesNotDependOnTiming(t *testing.T) {
+func TestTraceSearchSpanChoicesPlaceExpectedSpanAtStableOffset(t *testing.T) {
+	def := firstScenarioByLevel(t, testScenarioSet(), 1)
+	expectedSpanID := spanChoiceID(def.ExpectedService, def.AnswerKey.SpanOperation)
+
+	traceIDs := []string{"trace-alpha", "trace-bravo", "trace-charlie"}
+	positions := map[int]struct{}{}
+
+	for _, traceID := range traceIDs {
+		trace := traceFixture(traceID, def, nil)
+		trace.Spans = append(trace.Spans,
+			traceSpan{ID: "extra-a", Service: "inventory-api", Operation: "inventory.lookup.reserve_window", Start: trace.Start.Add(30 * time.Millisecond), DurationMS: 210, Tags: map[string]string{}},
+			traceSpan{ID: "extra-b", Service: "payments-api", Operation: "payments.authorize.prepare", Start: trace.Start.Add(40 * time.Millisecond), DurationMS: 160, Tags: map[string]string{}},
+			traceSpan{ID: "extra-c", Service: "orders-api", Operation: "orders.history.load_page", Start: trace.Start.Add(50 * time.Millisecond), DurationMS: 140, Tags: map[string]string{}},
+		)
+
+		choicesByTrace, err := traceSearchSpanChoices(def, []traceRecord{trace}, []string{traceID}, expectedSpanID)
+		if err != nil {
+			t.Fatalf("traceSearchSpanChoices(%s): %v", traceID, err)
+		}
+
+		choices := choicesByTrace[traceID]
+		gotIndex := -1
+		for idx, choice := range choices {
+			if choice.ID == expectedSpanID {
+				gotIndex = idx
+				break
+			}
+		}
+		if gotIndex < 0 {
+			t.Fatalf("expected span %q missing for %s: %+v", expectedSpanID, traceID, choices)
+		}
+
+		wantIndex := stableChoiceOffset(traceID+"|"+expectedSpanID, len(choices))
+		if gotIndex != wantIndex {
+			t.Fatalf("expected span index %d for %s, got %d", wantIndex, traceID, gotIndex)
+		}
+		positions[gotIndex] = struct{}{}
+	}
+
+	if len(positions) < 2 {
+		t.Fatalf("expected expected-span position to vary across traces, got %+v", positions)
+	}
+}
+
+func TestBuildPreparedChallengeCreatesCompareCulpritAssessment(t *testing.T) {
 	def := firstScenarioByLevel(t, testScenarioSet(), 2)
-	base := time.Unix(1700000000, 0)
-
-	healthyFirst := traceFixture("trace-healthy", def, nil)
-	faultyAFirst := traceFixture("trace-faulty-a", def, nil)
-	faultyBFirst := traceFixture("trace-faulty-b", def, nil)
-	healthyFirst.Start = base.Add(3 * time.Second)
-	faultyAFirst.Start = base.Add(2 * time.Second)
-	faultyBFirst.Start = base.Add(1 * time.Second)
-
-	challengeA, err := buildPreparedChallenge(def, traceGroups{
-		Healthy: []traceRecord{healthyFirst},
-		Faulty:  []traceRecord{faultyAFirst, faultyBFirst},
-	}, func(id string) string { return "/trace/" + id }, func(string, string, int, map[string]string) string { return "" }, func(string, string, []string) string { return "" })
+	beforeTrace := traceFixture("before-1", def, nil)
+	afterTrace := traceFixture("after-1", def, nil)
+	challenge, err := buildPreparedChallenge(def, traceGroups{
+		Before: []traceRecord{beforeTrace},
+		After:  []traceRecord{afterTrace},
+	}, func(id string) string { return "/trace/" + id }, func(string, string, int, map[string]string) string { return "" }, func(beforeID, afterID string, cohort []string) string {
+		return "/trace/" + beforeID + "..." + afterID + "?cohort=" + strings.Join(cohort, ",")
+	})
 	if err != nil {
-		t.Fatalf("buildPreparedChallenge first timing set: %v", err)
+		t.Fatalf("buildPreparedChallenge: %v", err)
 	}
 
-	healthyLast := traceFixture("trace-healthy", def, nil)
-	faultyASecond := traceFixture("trace-faulty-a", def, nil)
-	faultyBSecond := traceFixture("trace-faulty-b", def, nil)
-	healthyLast.Start = base.Add(1 * time.Second)
-	faultyASecond.Start = base.Add(3 * time.Second)
-	faultyBSecond.Start = base.Add(2 * time.Second)
-
-	challengeB, err := buildPreparedChallenge(def, traceGroups{
-		Healthy: []traceRecord{healthyLast},
-		Faulty:  []traceRecord{faultyASecond, faultyBSecond},
-	}, func(id string) string { return "/trace/" + id }, func(string, string, int, map[string]string) string { return "" }, func(string, string, []string) string { return "" })
-	if err != nil {
-		t.Fatalf("buildPreparedChallenge second timing set: %v", err)
+	if len(challenge.Public.TraceChoices) != 2 {
+		t.Fatalf("expected merged trace choices, got %+v", challenge.Public.TraceChoices)
 	}
-
-	gotA := publicTraceChoiceIDs(challengeA.Public.TraceChoices)
-	gotB := publicTraceChoiceIDs(challengeB.Public.TraceChoices)
-	if !sameOrderedStrings(gotA, gotB) {
-		t.Fatalf("expected stable mixed trace order independent of timing, got %v vs %v", gotA, gotB)
+	if len(challenge.Public.BeforeTraceChoices) != 1 {
+		t.Fatalf("expected one before trace choice, got %+v", challenge.Public.BeforeTraceChoices)
 	}
-	if !sameStringSet(gotA, []string{"trace-healthy", "trace-faulty-a", "trace-faulty-b"}) {
-		t.Fatalf("expected the same mixed trace ids, got %v", gotA)
+	if len(challenge.Public.AfterTraceChoices) != 1 {
+		t.Fatalf("expected one after trace choice, got %+v", challenge.Public.AfterTraceChoices)
+	}
+	if challenge.Public.CompareLink == nil || !strings.Contains(challenge.Public.CompareLink.URL, "/trace/before-1...after-1") {
+		t.Fatalf("expected compare link with before/after pair, got %+v", challenge.Public.CompareLink)
+	}
+	if !containsSpanChoice(challenge.Public.SpanChoices, spanChoiceID(def.ExpectedService, def.AnswerKey.SpanOperation)) {
+		t.Fatalf("expected culprit span choice to be available, got %+v", challenge.Public.SpanChoices)
+	}
+	if !containsID(challenge.ExpectedBeforeTraceIDs, "before-1") {
+		t.Fatalf("expected before trace id to be preserved, got %+v", challenge.ExpectedBeforeTraceIDs)
+	}
+	if !containsID(challenge.ExpectedAfterTraceIDs, "after-1") {
+		t.Fatalf("expected after trace id to be preserved, got %+v", challenge.ExpectedAfterTraceIDs)
 	}
 }
 
@@ -211,59 +248,57 @@ func TestGradeSubmissionRequiresTraceAndSpanEvidence(t *testing.T) {
 	}
 }
 
-func TestGradeSubmissionRequiresMixedTraceClassification(t *testing.T) {
+func TestGradeSubmissionRequiresCompareCulpritEvidence(t *testing.T) {
 	def := firstScenarioByLevel(t, testScenarioSet(), 2)
-	challenge := &preparedChallenge{
-		Public:                  publicAssessment{Ready: true, Type: def.AssessmentType},
-		ExpectedFaultyTraceIDs:  []string{"trace-a", "trace-b"},
-		ExpectedHealthyTraceIDs: []string{"trace-c"},
+	challenge, err := buildPreparedChallenge(def, traceGroups{
+		Before: []traceRecord{traceFixture("before-1", def, nil)},
+		After:  []traceRecord{traceFixture("after-1", def, nil)},
+	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" }, func(string, string, []string) string { return "" })
+	if err != nil {
+		t.Fatalf("buildPreparedChallenge: %v", err)
 	}
 
 	result := gradeSubmission(def, challenge, gradeRequest{
 		SuspectedService: def.ExpectedService,
 		SuspectedIssue:   def.ExpectedIssue,
-		FaultyTraceIDs:   []string{"trace-a"},
-		HealthyTraceID:   "trace-c",
+		SelectedSpan:     spanChoiceID("edge-api", "GET /api/search"),
 	})
 	if result.Pass {
-		t.Fatal("expected incomplete faulty set to fail")
+		t.Fatal("expected wrong span to fail")
+	}
+
+	result = gradeSubmission(def, challenge, gradeRequest{
+		SuspectedService: def.ExpectedService,
+		SuspectedIssue:   "wrong_issue",
+		SelectedSpan:     challenge.ExpectedSpanID,
+	})
+	if result.Pass {
+		t.Fatal("expected wrong issue to fail")
 	}
 
 	result = gradeSubmission(def, challenge, gradeRequest{
 		SuspectedService: def.ExpectedService,
 		SuspectedIssue:   def.ExpectedIssue,
-		FaultyTraceIDs:   []string{"trace-b", "trace-a"},
-		HealthyTraceID:   "trace-c",
+		SelectedSpan:     challenge.ExpectedSpanID,
 	})
 	if !result.Pass {
-		t.Fatalf("expected exact mixed trace selection to pass, got %q", result.Message)
+		t.Fatalf("expected correct compare culprit submission to pass, got %q", result.Message)
 	}
 }
 
-func TestGradeSubmissionAllowsAnyValidBeforeAfterPair(t *testing.T) {
-	def := firstScenarioByLevel(t, testScenarioSet(), 3)
-	challenge := &preparedChallenge{
-		Public:                 publicAssessment{Ready: true, Type: def.AssessmentType},
-		ExpectedBeforeTraceIDs: []string{"before-1", "before-2"},
-		ExpectedAfterTraceIDs:  []string{"after-1", "after-2"},
-	}
-
-	result := gradeSubmission(def, challenge, gradeRequest{
-		SuspectedService: def.ExpectedService,
-		SuspectedIssue:   def.ExpectedIssue,
-		BeforeTraceID:    "before-2",
-		AfterTraceID:     "after-1",
-	})
-	if !result.Pass {
-		t.Fatalf("expected allowed before/after pair to pass, got %q", result.Message)
-	}
-}
-
-func TestBuildPreparedChallengeCreatesBeforeAfterCompareAssessment(t *testing.T) {
+func TestBuildPreparedChallengeShowsCompareConfigChoices(t *testing.T) {
 	def := firstScenarioByLevel(t, testScenarioSet(), 3)
 	challenge, err := buildPreparedChallenge(def, traceGroups{
-		Before: []traceRecord{traceFixture("before-1", def, nil)},
-		After:  []traceRecord{traceFixture("after-1", def, nil)},
+		Before: []traceRecord{
+			traceFixture("trace-before", def, map[string]string{
+				def.AnswerKey.AttributeKey: "optimistic_guard",
+			}),
+		},
+		After: []traceRecord{
+			traceFixture("trace-after", def, map[string]string{
+				def.AnswerKey.AttributeKey: def.AnswerKey.AttributeValue,
+			}),
+		},
 	}, func(id string) string { return "/trace/" + id }, func(string, string, int, map[string]string) string { return "" }, func(beforeID, afterID string, cohort []string) string {
 		return "/trace/" + beforeID + "..." + afterID + "?cohort=" + strings.Join(cohort, ",")
 	})
@@ -280,25 +315,88 @@ func TestBuildPreparedChallengeCreatesBeforeAfterCompareAssessment(t *testing.T)
 	if len(challenge.Public.AfterTraceChoices) != 1 {
 		t.Fatalf("expected one after trace choice, got %+v", challenge.Public.AfterTraceChoices)
 	}
-	if challenge.Public.CompareLink == nil || !strings.Contains(challenge.Public.CompareLink.URL, "/trace/before-1...after-1") {
+	if challenge.Public.CompareLink == nil || !strings.Contains(challenge.Public.CompareLink.URL, "/trace/trace-before...trace-after") {
 		t.Fatalf("expected compare link with before/after pair, got %+v", challenge.Public.CompareLink)
 	}
-	if !strings.Contains(challenge.Public.CompareLink.URL, "cohort=before-1,after-1") {
+	if !strings.Contains(challenge.Public.CompareLink.URL, "cohort=trace-before,trace-after") {
 		t.Fatalf("expected compare cohort in link, got %+v", challenge.Public.CompareLink)
 	}
-	if !containsID(challenge.ExpectedBeforeTraceIDs, "before-1") {
-		t.Fatalf("expected before trace id to be preserved, got %+v", challenge.ExpectedBeforeTraceIDs)
+	if len(challenge.Public.AttributeChoices) != 8 {
+		t.Fatalf("expected eight changed-setting choices, got %+v", challenge.Public.AttributeChoices)
 	}
-	if !containsID(challenge.ExpectedAfterTraceIDs, "after-1") {
-		t.Fatalf("expected after trace id to be preserved, got %+v", challenge.ExpectedAfterTraceIDs)
+	if !containsAttributeChoice(challenge.Public.AttributeChoices, def.AnswerKey.AttributeKey) {
+		t.Fatalf("expected changed setting %q to be present, got %+v", def.AnswerKey.AttributeKey, challenge.Public.AttributeChoices)
+	}
+	if got := countSpanChoicesForService(challenge.Public.SpanChoices, def.ExpectedService); got < 4 {
+		t.Fatalf("expected at least four %s span choices, got %d: %+v", def.ExpectedService, got, challenge.Public.SpanChoices)
 	}
 }
 
-func TestGradeSubmissionRequiresProofTag(t *testing.T) {
-	def := firstScenarioByLevel(t, testScenarioSet(), 4)
+func TestBuildPreparedChallengeCompareConfigOnlySelectsOneDifferingTag(t *testing.T) {
+	def := firstScenarioByLevel(t, testScenarioSet(), 3)
+	before := traceFixture("trace-before", def, map[string]string{
+		def.AnswerKey.AttributeKey: "optimistic_guard",
+		"db.statement":             "select 1",
+		"lab.statement_signature":  "select 1",
+	})
+	after := traceFixture("trace-after", def, map[string]string{
+		def.AnswerKey.AttributeKey: "blocking_guard",
+		"db.statement":             "select pg_sleep(1.2)",
+		"lab.statement_signature":  "select pg_sleep(%s)",
+		"lab.wait_checkpoint":      "payments.idempotency.guard",
+	})
+
 	challenge, err := buildPreparedChallenge(def, traceGroups{
-		Faulty: []traceRecord{
-			traceFixture("trace-attribute", def, map[string]string{
+		Before: []traceRecord{before},
+		After:  []traceRecord{after},
+	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" }, func(string, string, []string) string { return "" })
+	if err != nil {
+		t.Fatalf("buildPreparedChallenge: %v", err)
+	}
+
+	beforeSpan, ok := findSpan(before, def.ExpectedService, def.AnswerKey.SpanOperation)
+	if !ok {
+		t.Fatalf("expected before responsible span for %s", def.ID)
+	}
+	afterSpan, ok := findSpan(after, def.ExpectedService, def.AnswerKey.SpanOperation)
+	if !ok {
+		t.Fatalf("expected after responsible span for %s", def.ID)
+	}
+
+	differingKeys := map[string]struct{}{}
+	for key, beforeValue := range beforeSpan.Tags {
+		if afterSpan.Tags[key] != beforeValue {
+			differingKeys[key] = struct{}{}
+		}
+	}
+	for key := range afterSpan.Tags {
+		if beforeSpan.Tags[key] != afterSpan.Tags[key] {
+			differingKeys[key] = struct{}{}
+		}
+	}
+
+	selectedDifferingKeys := make([]string, 0, len(differingKeys))
+	for _, option := range challenge.Public.AttributeChoices {
+		if _, ok := differingKeys[option.ID]; ok {
+			selectedDifferingKeys = append(selectedDifferingKeys, option.ID)
+		}
+	}
+
+	if !sameStringSet(selectedDifferingKeys, []string{def.AnswerKey.AttributeKey}) {
+		t.Fatalf("expected only changed setting %q to be selectable from differing keys, got %+v", def.AnswerKey.AttributeKey, selectedDifferingKeys)
+	}
+}
+
+func TestGradeSubmissionRequiresChangedSetting(t *testing.T) {
+	def := firstScenarioByLevel(t, testScenarioSet(), 3)
+	challenge, err := buildPreparedChallenge(def, traceGroups{
+		Before: []traceRecord{
+			traceFixture("trace-before", def, map[string]string{
+				def.AnswerKey.AttributeKey: "optimistic_guard",
+			}),
+		},
+		After: []traceRecord{
+			traceFixture("trace-after", def, map[string]string{
 				def.AnswerKey.AttributeKey: def.AnswerKey.AttributeValue,
 			}),
 		},
@@ -311,7 +409,7 @@ func TestGradeSubmissionRequiresProofTag(t *testing.T) {
 		SuspectedService:  def.ExpectedService,
 		SuspectedIssue:    def.ExpectedIssue,
 		SelectedSpan:      challenge.ExpectedSpanID,
-		SelectedAttribute: "lab.wait_checkpoint=wrong.value",
+		SelectedAttribute: "lab.config.payments_retry_budget",
 	})
 	if result.Pass {
 		t.Fatal("expected wrong attribute to fail")
@@ -324,36 +422,7 @@ func TestGradeSubmissionRequiresProofTag(t *testing.T) {
 		SelectedAttribute: challenge.ExpectedAttributeID,
 	})
 	if !result.Pass {
-		t.Fatalf("expected correct proof tag to pass, got %q", result.Message)
-	}
-}
-
-func TestBuildPreparedChallengeShowsProofTagsOnly(t *testing.T) {
-	def := firstScenarioByLevel(t, testScenarioSet(), 4)
-	challenge, err := buildPreparedChallenge(def, traceGroups{
-		Faulty: []traceRecord{
-			traceFixture("trace-attribute", def, map[string]string{
-				"lab.statement_signature":  "select pg_sleep(%s)",
-				"db.statement":             "select pg_sleep(1.2)",
-				def.AnswerKey.AttributeKey: def.AnswerKey.AttributeValue,
-			}),
-		},
-	}, func(string) string { return "" }, func(string, string, int, map[string]string) string { return "" }, func(string, string, []string) string { return "" })
-	if err != nil {
-		t.Fatalf("buildPreparedChallenge: %v", err)
-	}
-
-	labels := make([]string, 0, len(challenge.Public.AttributeChoices))
-	for _, option := range challenge.Public.AttributeChoices {
-		labels = append(labels, option.Label)
-	}
-
-	if !sameOrderedStrings(labels, []string{
-		"Query label: " + def.AnswerKey.SpanOperation,
-		"Statement signature: select pg_sleep(%s)",
-		"Wait checkpoint: " + def.AnswerKey.AttributeValue,
-	}) {
-		t.Fatalf("expected proof-tag labels only, got %+v", labels)
+		t.Fatalf("expected correct changed setting to pass, got %q", result.Message)
 	}
 }
 
@@ -375,11 +444,11 @@ func TestSelectLevelAllowsAnyLevelWithoutPriorCorrectCount(t *testing.T) {
 	s := newTestCoachServer(t, testScenarioSet())
 
 	s.mu.Lock()
-	s.state.Levels[5].Current = s.levels[4].Scenarios[0]
-	s.state.Levels[5].Prepared = true
+	s.state.Levels[3].Current = s.levels[2].Scenarios[0]
+	s.state.Levels[3].Prepared = true
 	s.mu.Unlock()
 
-	reqBody, err := json.Marshal(selectLevelRequest{Level: 5})
+	reqBody, err := json.Marshal(selectLevelRequest{Level: 3})
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
 	}
@@ -388,12 +457,12 @@ func TestSelectLevelAllowsAnyLevelWithoutPriorCorrectCount(t *testing.T) {
 	s.selectLevel(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected selecting level 5 to succeed, got status %d body %q", rec.Code, rec.Body.String())
+		t.Fatalf("expected selecting level 3 to succeed, got status %d body %q", rec.Code, rec.Body.String())
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.state.SelectedLevel != 5 {
-		t.Fatalf("expected selected level 5, got %d", s.state.SelectedLevel)
+	if s.state.SelectedLevel != 3 {
+		t.Fatalf("expected selected level 3, got %d", s.state.SelectedLevel)
 	}
 }
 
@@ -778,15 +847,72 @@ func traceFixture(id string, def scenario.Definition, extraTags map[string]strin
 		apiOperation = "GET /api" + def.Route
 	}
 
+	serviceRouteOperation, helperOps := serviceTraceFixtureOps(def.ExpectedService)
+	spans := []traceSpan{
+		{ID: "root", Service: def.FocusService, Operation: def.FocusOperation, Start: start, DurationMS: 900, Tags: map[string]string{}},
+		{ID: "edge", Service: "edge-api", Operation: apiOperation, Start: start.Add(10 * time.Millisecond), DurationMS: 820, Tags: map[string]string{}},
+	}
+	if serviceRouteOperation != "" {
+		spans = append(spans, traceSpan{
+			ID:         "service-route",
+			Service:    def.ExpectedService,
+			Operation:  serviceRouteOperation,
+			Start:      start.Add(15 * time.Millisecond),
+			DurationMS: 800,
+			Tags:       map[string]string{},
+		})
+	}
+	for idx, operation := range helperOps {
+		spans = append(spans, traceSpan{
+			ID:         fmt.Sprintf("helper-%d", idx+1),
+			Service:    def.ExpectedService,
+			Operation:  operation,
+			Start:      start.Add(time.Duration(16+idx) * time.Millisecond),
+			DurationMS: 40,
+			Tags:       map[string]string{},
+		})
+	}
+	spans = append(spans, traceSpan{
+		ID:         "culprit",
+		Service:    def.ExpectedService,
+		Operation:  def.AnswerKey.SpanOperation,
+		Start:      start.Add(20 * time.Millisecond),
+		DurationMS: 780,
+		Tags:       culpritTags,
+	})
+
 	return traceRecord{
 		ID:         id,
 		Start:      start,
 		DurationMS: 900,
-		Spans: []traceSpan{
-			{ID: "root", Service: def.FocusService, Operation: def.FocusOperation, Start: start, DurationMS: 900, Tags: map[string]string{}},
-			{ID: "edge", Service: "edge-api", Operation: apiOperation, Start: start.Add(10 * time.Millisecond), DurationMS: 820, Tags: map[string]string{}},
-			{ID: "culprit", Service: def.ExpectedService, Operation: def.AnswerKey.SpanOperation, Start: start.Add(20 * time.Millisecond), DurationMS: 780, Tags: culpritTags},
-		},
+		Spans:      spans,
+	}
+}
+
+func serviceTraceFixtureOps(service string) (string, []string) {
+	switch service {
+	case "inventory-api":
+		return "GET /internal/reserve", []string{
+			"inventory.reserve.plan_strategy",
+			"inventory.reserve.build_response",
+		}
+	case "orders-api":
+		return "GET /internal/history", []string{
+			"orders.history.resolve_window",
+			"orders.history.build_response",
+		}
+	case "payments-api":
+		return "GET /internal/charge", []string{
+			"payments.charge.validate_request",
+			"payments.charge.map_failure",
+		}
+	case "catalog-api":
+		return "GET /internal/search", []string{
+			"catalog.search.prepare_request",
+			"catalog.search.build_response",
+		}
+	default:
+		return "", nil
 	}
 }
 
@@ -805,10 +931,8 @@ func testScenarioSet() []scenario.Definition {
 
 	templates := []template{
 		{level: 1, assessmentType: assessmentTraceSearchSpan, route: "/search", op: "GET /search", service: "catalog-api", issue: "expensive_search_query", span: "catalog.search.fetch_results"},
-		{level: 2, assessmentType: assessmentHealthyFaulty, route: "/checkout", op: "GET /checkout", service: "inventory-api", issue: "n_plus_one_queries", span: "inventory.reserve.check_stock"},
-		{level: 3, assessmentType: assessmentBeforeAfter, route: "/account/orders", op: "GET /account/orders", service: "orders-api", issue: "expensive_sort", span: "orders.history.load_page"},
-		{level: 4, assessmentType: assessmentSpanAttribute, route: "/checkout", op: "GET /checkout", service: "payments-api", issue: "lock_wait_timeout", span: "payments.idempotency.ensure_guard", attrKey: "lab.wait_checkpoint", attrValue: "payments.idempotency.guard"},
-		{level: 5, assessmentType: assessmentIntermittent, route: "/search", op: "GET /search", service: "catalog-api", issue: "expensive_search_query", span: "catalog.search.fetch_results"},
+		{level: 2, assessmentType: assessmentCompareCulprit, route: "/checkout", op: "GET /checkout", service: "inventory-api", issue: "n_plus_one_queries", span: "inventory.reserve.check_stock"},
+		{level: 3, assessmentType: assessmentCompareConfig, route: "/checkout", op: "GET /checkout", service: "payments-api", issue: "lock_wait_timeout", span: "payments.idempotency.ensure_guard", attrKey: "lab.config.payments_lock_strategy", attrValue: "blocking_guard"},
 	}
 
 	defs := make([]scenario.Definition, 0, len(templates)*3)
@@ -849,14 +973,12 @@ func testBatchPlan(assessmentType string) scenario.BatchPlan {
 		return scenario.BatchPlan{FaultyCount: 1, HealthyCount: 1, BackgroundCount: 1, CandidateCount: 2}
 	case assessmentCulpritSpan:
 		return scenario.BatchPlan{FaultyCount: 2, BackgroundCount: 1}
-	case assessmentHealthyFaulty:
-		return scenario.BatchPlan{FaultyCount: 2, HealthyCount: 1, BackgroundCount: 1}
-	case assessmentBeforeAfter:
+	case assessmentCompareCulprit:
+		return scenario.BatchPlan{BeforeCount: 1, AfterCount: 1, BackgroundCount: 1}
+	case assessmentCompareConfig:
 		return scenario.BatchPlan{BeforeCount: 1, AfterCount: 1, BackgroundCount: 1}
 	case assessmentSpanAttribute:
 		return scenario.BatchPlan{FaultyCount: 2, BackgroundCount: 1}
-	case assessmentIntermittent:
-		return scenario.BatchPlan{FaultyCount: 2, HealthyCount: 2, BackgroundCount: 1}
 	default:
 		return scenario.BatchPlan{}
 	}

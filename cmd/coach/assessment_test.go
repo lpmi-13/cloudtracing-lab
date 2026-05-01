@@ -23,7 +23,7 @@ func TestFeedbackUsesVisibleFieldNames(t *testing.T) {
 		{
 			name:     "culprit_span",
 			message:  culpritSpanFeedback(true, false, true),
-			want:     []string{"responsible service", "failure mode", "culprit span"},
+			want:     []string{"responsible service", "failure mode", "responsible span"},
 			unwanted: []string{"issue type", "diagnosis"},
 		},
 		{
@@ -33,9 +33,9 @@ func TestFeedbackUsesVisibleFieldNames(t *testing.T) {
 			unwanted: []string{"diagnosis", "trace grouping"},
 		},
 		{
-			name:     "span_attribute",
-			message:  spanAttributeFeedback(true, true, true, false),
-			want:     []string{"responsible service", "failure mode", "culprit span", "proof tag"},
+			name:     "compare_config",
+			message:  compareConfigFeedback(true, true, true, false),
+			want:     []string{"responsible service", "failure mode", "responsible span", "changed setting"},
 			unwanted: []string{"diagnosis", "supporting evidence"},
 		},
 		{

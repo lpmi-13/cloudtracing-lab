@@ -123,139 +123,16 @@
     }
   },
   {
-    "id": "l2-search-mixed",
+    "id": "l2-search-compare",
     "level": 2,
     "variant_group": "catalog_search",
-    "assessment_type": "healthy_faulty",
-    "assessment_prompt": "Open the trace links, pick the slow traces and the one healthy trace, then name the responsible service and failure mode.",
-    "title": "Some search requests stay healthy while others regress",
-    "objective": "Classify the traces as slow or healthy, then name the responsible service and failure mode.",
-    "prompt": "Open each trace and decide which ones are fast and which ones are slower.",
-    "hint_1": "Click the Open trace link below each trace label, then inspect the timing in Jaeger to confirm which traces are slow.",
-    "hint_2": "After classifying the traces, identify the service that stays slow in the slow traces and explain why it is slow.",
-    "route": "/search",
-    "traffic_path": "/search?q=camp",
-    "focus_service": "shop-web",
-    "focus_operation": "GET /search",
-    "expected_service": "catalog-api",
-    "expected_tier": "search",
-    "expected_issue": "expensive_search_query",
-    "answer": "catalog-api / broad Meilisearch query after a Redis cache miss",
-    "search_limit": 30,
-    "answer_key": {
-      "service": "catalog-api",
-      "issue": "expensive_search_query",
-      "span_operation": "catalog.search.fetch_results"
-    },
-    "batch_plan": {
-      "faulty_count": 2,
-      "healthy_count": 1,
-      "background_count": 3,
-      "candidate_count": 3
-    },
-    "services": {
-      "catalog-api": {
-        "mode": "expensive_search_query",
-        "latency_ms": 940,
-        "repeat": 1,
-        "query_label": "catalog.search.fetch_results",
-        "query_text": "{\"q\":\"camp\",\"limit\":12,\"attributesToRetrieve\":[\"sku\",\"name\",\"price\"]}"
-      }
-    }
-  },
-  {
-    "id": "l2-checkout-mixed",
-    "level": 2,
-    "variant_group": "inventory_checkout",
-    "assessment_type": "healthy_faulty",
-    "assessment_prompt": "Open the trace links, pick the slow traces and the one healthy trace, then name the responsible service and failure mode.",
-    "title": "Only some checkout traces show the inventory slowdown",
-    "objective": "Classify the traces as slow or healthy, then name the responsible service and failure mode.",
-    "prompt": "Open each trace and decide which ones are fast and which ones are slower.",
-    "hint_1": "Click the Open trace link below each trace label, then inspect the timing in Jaeger to confirm which traces are slow.",
-    "hint_2": "After classifying the traces, identify the service that stays slow in the slow traces and explain why it is slow.",
-    "route": "/checkout",
-    "traffic_path": "/checkout?sku=sku-28",
-    "focus_service": "shop-web",
-    "focus_operation": "GET /checkout",
-    "expected_service": "inventory-api",
-    "expected_tier": "database",
-    "expected_issue": "n_plus_one_queries",
-    "answer": "inventory-api / repeated stock lookup queries during reserve",
-    "search_limit": 30,
-    "answer_key": {
-      "service": "inventory-api",
-      "issue": "n_plus_one_queries",
-      "span_operation": "inventory.reserve.check_stock"
-    },
-    "batch_plan": {
-      "faulty_count": 2,
-      "healthy_count": 1,
-      "background_count": 3,
-      "candidate_count": 3
-    },
-    "services": {
-      "inventory-api": {
-        "mode": "n_plus_one_queries",
-        "latency_ms": 150,
-        "repeat": 6,
-        "query_label": "inventory.reserve.check_stock",
-        "query_text": "select warehouse_id, quantity, reserved from stock_levels where sku = $1 and warehouse_id = $2"
-      }
-    }
-  },
-  {
-    "id": "l2-orders-mixed",
-    "level": 2,
-    "variant_group": "orders_history",
-    "assessment_type": "healthy_faulty",
-    "assessment_prompt": "Open the trace links, pick the slow traces and the one healthy trace, then name the responsible service and failure mode.",
-    "title": "Order-history traces are mixed after a query-plan change",
-    "objective": "Classify the traces as slow or healthy, then name the responsible service and failure mode.",
-    "prompt": "Open each trace and decide which ones are fast and which ones are slower.",
-    "hint_1": "Click the Open trace link below each trace label, then inspect the timing in Jaeger to confirm which traces are slow.",
-    "hint_2": "After classifying the traces, identify the service that stays slow in the slow traces and explain why it is slow.",
-    "route": "/account/orders",
-    "traffic_path": "/account/orders?user_id=user-8",
-    "focus_service": "shop-web",
-    "focus_operation": "GET /account/orders",
-    "expected_service": "orders-api",
-    "expected_tier": "database",
-    "expected_issue": "expensive_sort",
-    "answer": "orders-api / expensive sort in order-history query",
-    "search_limit": 30,
-    "answer_key": {
-      "service": "orders-api",
-      "issue": "expensive_sort",
-      "span_operation": "orders.history.load_page"
-    },
-    "batch_plan": {
-      "faulty_count": 2,
-      "healthy_count": 1,
-      "background_count": 3,
-      "candidate_count": 3
-    },
-    "services": {
-      "orders-api": {
-        "mode": "expensive_sort",
-        "latency_ms": 820,
-        "repeat": 1,
-        "query_label": "orders.history.load_page",
-        "query_text": "select order_ref, sku, total, status, created_at from orders where user_id = $1 order by total desc, created_at desc limit 20"
-      }
-    }
-  },
-  {
-    "id": "l3-search-change",
-    "level": 3,
-    "variant_group": "catalog_search",
-    "assessment_type": "before_after",
-    "assessment_prompt": "Open Jaeger Compare with one before trace and one after trace, compare what changed, then name the responsible service and failure mode.",
-    "title": "Respond to an elevated search latency alert",
-    "objective": "Compare before and after search traces to explain the latency alert.",
-    "prompt": "The search team suspects a new rollout changed query behavior. Open Jaeger Compare, load a before trace against an after trace, and identify the service and failure mode that changed between them.",
+    "assessment_type": "compare_culprit_span",
+    "assessment_prompt": "Open Jaeger Compare with one before trace and one after trace, inspect the slower trace, then submit the responsible service, failure mode, and responsible span.",
+    "title": "Compare search traces to find the responsible span",
+    "objective": "Use Jaeger Compare to identify the span that explains the search slowdown.",
+    "prompt": "Search latency climbed after a rollout. Compare a healthy trace against a slower one, then identify the specific span in the slower trace that now explains the delay.",
     "hint_1": "Use the before trace in Compare as your baseline, then inspect how the search branch behaves in the after trace.",
-    "hint_2": "Click the after trace details at the top of Compare, such as \"B shop-web: GET /search ...\", to jump to the slower sub-spans. The catalog search branch stays open far longer than the baseline trace does.",
+    "hint_2": "Click the after trace details at the top of Compare, such as \"B shop-web: GET /search ...\", to jump to the slower sub-spans. Then choose the exact span that widened.",
     "route": "/search",
     "traffic_path": "/search?q=daypack",
     "focus_service": "shop-web",
@@ -287,16 +164,16 @@
     }
   },
   {
-    "id": "l3-checkout-change",
-    "level": 3,
+    "id": "l2-checkout-compare",
+    "level": 2,
     "variant_group": "inventory_checkout",
-    "assessment_type": "before_after",
-    "assessment_prompt": "Open Jaeger Compare with one before trace and one after trace, compare what changed, then name the responsible service and failure mode.",
-    "title": "Respond to an elevated checkout latency alert",
-    "objective": "Compare before and after checkout traces to explain the latency alert.",
-    "prompt": "A reservation deploy may have changed checkout behavior. Open Jaeger Compare, compare a before trace against an after trace, and identify the service and failure mode that changed across the two windows.",
+    "assessment_type": "compare_culprit_span",
+    "assessment_prompt": "Open Jaeger Compare with one before trace and one after trace, inspect the slower trace, then submit the responsible service, failure mode, and responsible span.",
+    "title": "Compare checkout traces to find the responsible span",
+    "objective": "Use Jaeger Compare to identify the span that explains the checkout slowdown.",
+    "prompt": "Checkout got slower after a reservation change. Compare a healthy trace against a slower one, then identify the specific span in the slower trace that now explains the delay.",
     "hint_1": "Use the before checkout trace in Compare to see the healthy shape first, then inspect how the inventory branch expands in the after trace.",
-    "hint_2": "Click the after trace details at the top of Compare, such as \"B shop-web: GET /checkout ...\", to jump to the slower sub-spans. The after trace repeats inventory work several times before payment starts. The baseline trace does not.",
+    "hint_2": "Click the after trace details at the top of Compare, such as \"B shop-web: GET /checkout ...\", to jump to the slower sub-spans. Then choose the exact span that widened.",
     "route": "/checkout",
     "traffic_path": "/checkout?sku=sku-41",
     "focus_service": "shop-web",
@@ -328,16 +205,16 @@
     }
   },
   {
-    "id": "l3-orders-change",
-    "level": 3,
+    "id": "l2-orders-compare",
+    "level": 2,
     "variant_group": "orders_history",
-    "assessment_type": "before_after",
-    "assessment_prompt": "Open Jaeger Compare with one before trace and one after trace, compare what changed, then name the responsible service and failure mode.",
-    "title": "Respond to an elevated order history latency alert",
-    "objective": "Compare before and after history traces to explain the latency alert.",
-    "prompt": "The history team suspects a sort change degraded performance. Open Jaeger Compare, compare one before trace against one after trace, and identify the service and failure mode that changed.",
+    "assessment_type": "compare_culprit_span",
+    "assessment_prompt": "Open Jaeger Compare with one before trace and one after trace, inspect the slower trace, then submit the responsible service, failure mode, and responsible span.",
+    "title": "Compare history traces to find the responsible span",
+    "objective": "Use Jaeger Compare to identify the span that explains the history slowdown.",
+    "prompt": "Order history latency climbed after a query change. Compare a healthy trace against a slower one, then identify the specific span in the slower trace that now explains the delay.",
     "hint_1": "Use the before trace in Compare to learn the healthy timing pattern before you inspect the after trace.",
-    "hint_2": "Click the after trace details at the top of Compare, such as \"B shop-web: GET /account/orders ...\", to jump to the slower sub-spans. The after trace spends much longer in the order-history query span. That is the change you need to explain.",
+    "hint_2": "Click the after trace details at the top of Compare, such as \"B shop-web: GET /account/orders ...\", to jump to the slower sub-spans. Then choose the exact span that widened.",
     "route": "/account/orders",
     "traffic_path": "/account/orders?user_id=user-12",
     "focus_service": "shop-web",
@@ -369,58 +246,61 @@
     }
   },
   {
-    "id": "l4-search-attribute",
-    "level": 4,
-    "variant_group": "catalog_search",
-    "assessment_type": "span_attribute",
-    "assessment_prompt": "Submit the responsible service, the failure mode, the culprit span, and the proof tag on that span.",
-    "title": "Search slowdown needs span-level proof",
-    "objective": "Use the culprit span and its proof tag to prove the search diagnosis.",
-    "prompt": "You already know how to find the slow span. This time you must also prove the diagnosis with the proof tag on that span, not with a generic database tag.",
-    "hint_1": "Find the slow span first. Then open that span's tags and look for the proof tag that most specifically names the slow work.",
-    "hint_2": "On the search span, the strongest proof is the lab-specific query label that names the heavy operation. Generic database tags are not specific enough.",
-    "route": "/search",
-    "traffic_path": "/search?q=summit",
+    "id": "l3-inventory-setting",
+    "level": 3,
+    "variant_group": "inventory_checkout",
+    "assessment_type": "compare_config_change",
+    "assessment_prompt": "Submit the responsible service, the failure mode, the responsible span, and the changed setting you would revert.",
+    "title": "Checkout slowdown points to one changed inventory setting",
+    "objective": "Use Jaeger Compare and the responsible span tags to identify which inventory setting changed.",
+    "prompt": "Checkout slowed down after an inventory rollout. Compare a healthy trace against a slower one, inspect the slower inventory span, and identify which setting changed across the boundary.",
+    "hint_1": "Use Jaeger Compare to find the slower inventory span first. Then click into the after trace and open that span's tags.",
+    "hint_2": "On the repeated inventory reserve span, look for the `lab.config.*` tag whose value changed between the healthy and regressed traces. That key is the setting to revert.",
+    "route": "/checkout",
+    "traffic_path": "/checkout?sku=sku-28",
     "focus_service": "shop-web",
-    "focus_operation": "GET /search",
-    "expected_service": "catalog-api",
-    "expected_tier": "search",
-    "expected_issue": "expensive_search_query",
-    "answer": "catalog-api / catalog.search.fetch_results proven by its span attribute",
+    "focus_operation": "GET /checkout",
+    "expected_service": "inventory-api",
+    "expected_tier": "database",
+    "expected_issue": "n_plus_one_queries",
+    "answer": "inventory-api / repeated stock lookups caused by one changed inventory setting",
     "search_limit": 30,
     "answer_key": {
-      "service": "catalog-api",
-      "issue": "expensive_search_query",
-      "span_operation": "catalog.search.fetch_results",
-      "attribute_key": "lab.query_label",
-      "attribute_value": "catalog.search.fetch_results"
+      "service": "inventory-api",
+      "issue": "n_plus_one_queries",
+      "span_operation": "inventory.reserve.check_stock",
+      "attribute_key": "lab.config.inventory_reserve_strategy",
+      "attribute_value": "per_warehouse_queries"
     },
     "batch_plan": {
-      "faulty_count": 3,
+      "before_count": 2,
+      "after_count": 2,
       "background_count": 3,
-      "candidate_count": 3
+      "candidate_count": 4
     },
     "services": {
-      "catalog-api": {
-        "mode": "expensive_search_query",
-        "latency_ms": 950,
-        "repeat": 1,
-        "query_label": "catalog.search.fetch_results",
-        "query_text": "{\"q\":\"summit\",\"limit\":12,\"attributesToRetrieve\":[\"sku\",\"name\",\"price\"]}"
+      "inventory-api": {
+        "mode": "n_plus_one_queries",
+        "latency_ms": 150,
+        "repeat": 6,
+        "query_label": "inventory.reserve.check_stock",
+        "query_text": "select warehouse_id, quantity, reserved from stock_levels where sku = $1 and warehouse_id = $2",
+        "config_key": "lab.config.inventory_reserve_strategy",
+        "config_value": "per_warehouse_queries"
       }
     }
   },
   {
-    "id": "l4-orders-attribute",
-    "level": 4,
+    "id": "l3-orders-setting",
+    "level": 3,
     "variant_group": "orders_history",
-    "assessment_type": "span_attribute",
-    "assessment_prompt": "Submit the responsible service, the failure mode, the culprit span, and the proof tag on that span.",
-    "title": "History slowdown needs span-level proof",
-    "objective": "Use the culprit span and its proof tag to prove the history diagnosis.",
-    "prompt": "You already know how to find the slow span. This time the coach expects proof: identify the culprit span and the proof tag that anchors the diagnosis.",
-    "hint_1": "Do not start with tags. Find the slow history span first, then open that span's tags and look for the proof tag.",
-    "hint_2": "On the history span, the strongest proof is the lab-specific query label that names the heavy history operation.",
+    "assessment_type": "compare_config_change",
+    "assessment_prompt": "Submit the responsible service, the failure mode, the responsible span, and the changed setting you would revert.",
+    "title": "History slowdown points to one changed orders setting",
+    "objective": "Use Jaeger Compare and the responsible span tags to identify which orders setting changed.",
+    "prompt": "Order history regressed after a rollout. Compare a healthy trace against a slower one, inspect the slower history span, and identify which setting changed across the boundary.",
+    "hint_1": "Use Jaeger Compare to confirm that the history span is the one that widened. Then open the after trace and inspect that span's tags.",
+    "hint_2": "On the history span, the changed setting is the `lab.config.*` key whose value differs between the healthy and regressed traces.",
     "route": "/account/orders",
     "traffic_path": "/account/orders?user_id=user-16",
     "focus_service": "shop-web",
@@ -428,19 +308,20 @@
     "expected_service": "orders-api",
     "expected_tier": "database",
     "expected_issue": "expensive_sort",
-    "answer": "orders-api / orders.history.load_page proven by its span attribute",
+    "answer": "orders-api / expensive sort caused by one changed orders setting",
     "search_limit": 30,
     "answer_key": {
       "service": "orders-api",
       "issue": "expensive_sort",
       "span_operation": "orders.history.load_page",
-      "attribute_key": "lab.query_label",
-      "attribute_value": "orders.history.load_page"
+      "attribute_key": "lab.config.orders_sort_strategy",
+      "attribute_value": "total_then_created_at"
     },
     "batch_plan": {
-      "faulty_count": 3,
+      "before_count": 2,
+      "after_count": 2,
       "background_count": 3,
-      "candidate_count": 3
+      "candidate_count": 4
     },
     "services": {
       "orders-api": {
@@ -448,21 +329,23 @@
         "latency_ms": 880,
         "repeat": 1,
         "query_label": "orders.history.load_page",
-        "query_text": "select order_ref, sku, total, status, created_at from orders where user_id = $1 order by total desc, created_at desc limit 20"
+        "query_text": "select order_ref, sku, total, status, created_at from orders where user_id = $1 order by total desc, created_at desc limit 20",
+        "config_key": "lab.config.orders_sort_strategy",
+        "config_value": "total_then_created_at"
       }
     }
   },
   {
-    "id": "l4-payment-attribute",
-    "level": 4,
+    "id": "l3-payment-setting",
+    "level": 3,
     "variant_group": "payments_checkout",
-    "assessment_type": "span_attribute",
-    "assessment_prompt": "Submit the responsible service, the failure mode, the culprit span, and the proof tag on that span.",
-    "title": "Checkout failures need span-level proof",
-    "objective": "Use the culprit span and its proof tag to prove the payment-path diagnosis.",
-    "prompt": "Checkout now fails in the payment path. You must identify the culprit span and the proof tag that names where the lock wait happened.",
-    "hint_1": "Ignore successful catalog and inventory work. Find the slow failing span on the payment branch first, then open that span's tags.",
-    "hint_2": "On the payment span, the strongest proof is the lab-specific wait checkpoint tag that names where the lock wait happened.",
+    "assessment_type": "compare_config_change",
+    "assessment_prompt": "Submit the responsible service, the failure mode, the responsible span, and the changed setting you would revert.",
+    "title": "Checkout failures point to one changed payment setting",
+    "objective": "Use Jaeger Compare and the responsible span tags to identify which payment setting changed.",
+    "prompt": "Checkout now fails after a payment rollout. Compare a healthy trace against the failing one, inspect the slower payment span, and identify which setting changed across the boundary.",
+    "hint_1": "Use Jaeger Compare to find the payment span that became slower or failing. Then open the after trace and inspect that span's tags.",
+    "hint_2": "On the payment guard span, the changed setting is the `lab.config.*` key whose value differs between the healthy and regressed traces.",
     "route": "/checkout",
     "traffic_path": "/checkout?sku=sku-19",
     "focus_service": "shop-web",
@@ -470,19 +353,20 @@
     "expected_service": "payments-api",
     "expected_tier": "database",
     "expected_issue": "lock_wait_timeout",
-    "answer": "payments-api / lock wait timeout proven by the failure attribute",
+    "answer": "payments-api / lock wait timeout caused by one changed payment setting",
     "search_limit": 30,
     "answer_key": {
       "service": "payments-api",
       "issue": "lock_wait_timeout",
       "span_operation": "payments.idempotency.ensure_guard",
-      "attribute_key": "lab.wait_checkpoint",
-      "attribute_value": "payments.idempotency.guard"
+      "attribute_key": "lab.config.payments_lock_strategy",
+      "attribute_value": "blocking_guard"
     },
     "batch_plan": {
-      "faulty_count": 3,
+      "before_count": 2,
+      "after_count": 2,
       "background_count": 3,
-      "candidate_count": 3
+      "candidate_count": 4
     },
     "services": {
       "payments-api": {
@@ -490,130 +374,9 @@
         "latency_ms": 1200,
         "repeat": 1,
         "query_label": "payments.idempotency.ensure_guard",
-        "query_text": "select pg_sleep(1.2)"
-      }
-    }
-  },
-  {
-    "id": "l5-search-intermittent",
-    "level": 5,
-    "variant_group": "catalog_search",
-    "assessment_type": "intermittent_failure",
-    "assessment_prompt": "From the intermittent candidate set, select every failing trace, then name the responsible service and issue.",
-    "title": "Search only regresses on some requests",
-    "objective": "Identify every slow trace in an intermittent search failure set.",
-    "prompt": "Search only slows down on some requests after the latest catalog update. Inspect the mixed trace set and select every slow request before naming the responsible service.",
-    "hint_1": "Do not assume every search trace is bad. Compare the candidate traces and decide which ones actually show the regression.",
-    "hint_2": "The slow traces keep the catalog search branch open much longer than the healthy traces do.",
-    "route": "/search",
-    "traffic_path": "/search?q=camp",
-    "focus_service": "shop-web",
-    "focus_operation": "GET /search",
-    "expected_service": "catalog-api",
-    "expected_tier": "search",
-    "expected_issue": "expensive_search_query",
-    "answer": "catalog-api / intermittent broad search query regression",
-    "search_limit": 30,
-    "answer_key": {
-      "service": "catalog-api",
-      "issue": "expensive_search_query",
-      "span_operation": "catalog.search.fetch_results"
-    },
-    "batch_plan": {
-      "faulty_count": 2,
-      "healthy_count": 3,
-      "background_count": 3,
-      "candidate_count": 5
-    },
-    "services": {
-      "catalog-api": {
-        "mode": "expensive_search_query",
-        "latency_ms": 960,
-        "repeat": 1,
-        "query_label": "catalog.search.fetch_results",
-        "query_text": "{\"q\":\"camp\",\"limit\":12,\"attributesToRetrieve\":[\"sku\",\"name\",\"price\"]}"
-      }
-    }
-  },
-  {
-    "id": "l5-checkout-intermittent",
-    "level": 5,
-    "variant_group": "payments_checkout",
-    "assessment_type": "intermittent_failure",
-    "assessment_prompt": "From the intermittent candidate set, select every failing trace, then name the responsible service and issue.",
-    "title": "Checkout only fails on some payment attempts",
-    "objective": "Identify every failing trace in an intermittent payment failure set.",
-    "prompt": "Checkout does not fail every time. Inspect the mixed candidate set and select every failing request before you name the service and failure mode.",
-    "hint_1": "Start by separating the successful checkout traces from the ones that fail on the payment branch.",
-    "hint_2": "Only the failing traces show the slow payment span ending in the lock-wait behavior.",
-    "route": "/checkout",
-    "traffic_path": "/checkout?sku=sku-33",
-    "focus_service": "shop-web",
-    "focus_operation": "GET /checkout",
-    "expected_service": "payments-api",
-    "expected_tier": "database",
-    "expected_issue": "lock_wait_timeout",
-    "answer": "payments-api / intermittent lock wait timeout",
-    "search_limit": 30,
-    "answer_key": {
-      "service": "payments-api",
-      "issue": "lock_wait_timeout",
-      "span_operation": "payments.idempotency.ensure_guard"
-    },
-    "batch_plan": {
-      "faulty_count": 2,
-      "healthy_count": 3,
-      "background_count": 3,
-      "candidate_count": 5
-    },
-    "services": {
-      "payments-api": {
-        "mode": "lock_wait_timeout",
-        "latency_ms": 1200,
-        "repeat": 1,
-        "query_label": "payments.idempotency.ensure_guard",
-        "query_text": "select pg_sleep(1.2)"
-      }
-    }
-  },
-  {
-    "id": "l5-orders-intermittent",
-    "level": 5,
-    "variant_group": "orders_history",
-    "assessment_type": "intermittent_failure",
-    "assessment_prompt": "From the intermittent candidate set, select every failing trace, then name the responsible service and issue.",
-    "title": "Order history only regresses on some requests",
-    "objective": "Identify every slow trace in an intermittent order-history slowdown set.",
-    "prompt": "History latency is inconsistent after a query tuning change. Some traces still look healthy. Others are clearly slow. Select every slow trace before naming the responsible service.",
-    "hint_1": "Do not grade by route alone. Compare the candidate traces and decide which ones actually show the long history query span.",
-    "hint_2": "Only the slow traces spend heavy time in the history query span before the featured-product lookup begins.",
-    "route": "/account/orders",
-    "traffic_path": "/account/orders?user_id=user-20",
-    "focus_service": "shop-web",
-    "focus_operation": "GET /account/orders",
-    "expected_service": "orders-api",
-    "expected_tier": "database",
-    "expected_issue": "expensive_sort",
-    "answer": "orders-api / intermittent expensive sort regression",
-    "search_limit": 30,
-    "answer_key": {
-      "service": "orders-api",
-      "issue": "expensive_sort",
-      "span_operation": "orders.history.load_page"
-    },
-    "batch_plan": {
-      "faulty_count": 2,
-      "healthy_count": 3,
-      "background_count": 3,
-      "candidate_count": 5
-    },
-    "services": {
-      "orders-api": {
-        "mode": "expensive_sort",
-        "latency_ms": 870,
-        "repeat": 1,
-        "query_label": "orders.history.load_page",
-        "query_text": "select order_ref, sku, total, status, created_at from orders where user_id = $1 order by total desc, created_at desc limit 20"
+        "query_text": "select pg_sleep(1.2)",
+        "config_key": "lab.config.payments_lock_strategy",
+        "config_value": "blocking_guard"
       }
     }
   }

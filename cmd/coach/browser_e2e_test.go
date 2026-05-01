@@ -20,7 +20,7 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
-const skillPlacementStorageKey = "cloudtracing.skillPlacement.v1"
+const skillPlacementStorageKey = "cloudtracing.skillPlacement.v2"
 
 func TestCoachBrowserAssessmentModes(t *testing.T) {
 	t.Run("level_1_trace_search_span", func(t *testing.T) {
@@ -56,38 +56,37 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 		waitForFeedbackContains(t, tab, "trace used is wrong")
 	})
 
-	t.Run("level_2_healthy_faulty", func(t *testing.T) {
+	t.Run("level_2_compare_culprit", func(t *testing.T) {
 		h := newCoachE2EHarness(t, coachSessionSetup{SelectedLevel: 2, CorrectCounts: map[int]int{1: correctTarget}})
 		tab, closeTab := newBrowserRoot(t)
 		defer closeTab()
 
 		navigateCoach(t, tab, h.coach.URL)
-		waitForLevelUI(t, tab, assessmentHealthyFaulty)
+		waitForLevelUI(t, tab, assessmentCompareCulprit)
 		assertAssessmentContract(t, tab)
-		waitForCondition(t, tab, `document.getElementById("title").textContent.trim() === "Classify the traces as slow or healthy, then name the responsible service and failure mode."`)
+		waitForCondition(t, tab, `document.getElementById("title").textContent.toLowerCase().includes("compare")`)
 		waitForCondition(t, tab, `document.getElementById("objective").textContent.trim() === ""`)
 		waitForCondition(t, tab, `document.querySelector('#levels .level-button:nth-child(1) .level-complete') !== null`)
 		waitForCondition(t, tab, `!document.getElementById("levels").textContent.includes("OPEN") && !document.getElementById("levels").textContent.includes("READY")`)
 		waitForCondition(t, tab, `document.getElementById("open-jaeger").classList.contains("hidden")`)
-		waitForCondition(t, tab, `document.getElementById("reference-trace").classList.contains("hidden")`)
 		waitForCondition(t, tab, `document.getElementById("assessment-prompt").classList.contains("hidden")`)
-		waitForCondition(t, tab, `document.getElementById("issue-help").textContent.includes("load_page")`)
-		waitForCondition(t, tab, `document.querySelector('#issue option[value="expensive_sort"]').textContent.includes("load_page")`)
+		waitForCondition(t, tab, `(() => {
+			const link = document.querySelector("#reference-trace a");
+			return !!link && link.textContent.trim() === "Compare traces" && link.href.includes("/trace/") && link.href.includes("...");
+		})()`)
 
 		answer := h.waitForSelectedAnswer(t)
 		setSelectValue(t, tab, "#service", answer.Service, false)
 		setSelectValue(t, tab, "#issue", answer.Issue, false)
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "Classify every trace before submitting.")
+		waitForFeedbackContains(t, tab, "Select the responsible span before submitting.")
 
-		setTraceRole(t, tab, answer.FaultyTraceIDs[0], "slow")
-		setTraceRole(t, tab, answer.FaultyTraceIDs[1], "healthy")
-		setTraceRole(t, tab, answer.HealthyTraceID, "slow")
+		setSelectValue(t, tab, "#selected-span", wrongSelectOptionValue(t, tab, "#selected-span", answer.SpanID), false)
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "slow trace and healthy trace selections are wrong")
+		waitForFeedbackContains(t, tab, "responsible span is wrong")
 	})
 
-	t.Run("level_3_before_after", func(t *testing.T) {
+	t.Run("level_3_compare_config", func(t *testing.T) {
 		h := newCoachE2EHarness(t, coachSessionSetup{
 			SelectedLevel: 3,
 			CorrectCounts: map[int]int{1: correctTarget, 2: correctTarget},
@@ -96,78 +95,28 @@ func TestCoachBrowserAssessmentModes(t *testing.T) {
 		defer closeTab()
 
 		navigateCoach(t, tab, h.coach.URL)
-		waitForLevelUI(t, tab, assessmentBeforeAfter)
+		waitForLevelUI(t, tab, assessmentCompareConfig)
 		assertAssessmentContract(t, tab)
 		waitForCondition(t, tab, `(() => {
 			const link = document.querySelector("#reference-trace a");
 			return !!link && link.textContent.trim() === "Compare traces" && link.href.includes("/trace/") && link.href.includes("...");
 		})()`)
 		waitForCondition(t, tab, `document.getElementById("open-jaeger").classList.contains("hidden")`)
-		waitForCondition(t, tab, `document.getElementById("assessment-prompt").classList.contains("hidden")`)
-		waitForCondition(t, tab, `document.getElementById("selected-level-title").textContent.includes("Respond to an Elevated Latency Alert")`)
-		waitForCondition(t, tab, `document.getElementById("title").textContent.toLowerCase().includes("elevated")`)
-		waitForCondition(t, tab, `document.getElementById("before-trace") === null && document.getElementById("after-trace") === null`)
-
-		answer := h.waitForSelectedAnswer(t)
-		setSelectValue(t, tab, "#service", answer.Service, false)
-		setSelectValue(t, tab, "#issue", wrongSelectOptionValue(t, tab, "#issue", answer.Issue), false)
-		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "failure mode is wrong")
-		setSelectValue(t, tab, "#issue", answer.Issue, false)
-		click(t, tab, "#submit")
-		waitForProgress(t, tab, "1/5 correct")
-	})
-
-	t.Run("level_4_span_attribute", func(t *testing.T) {
-		h := newCoachE2EHarness(t, coachSessionSetup{
-			SelectedLevel: 4,
-			CorrectCounts: map[int]int{1: correctTarget, 2: correctTarget, 3: correctTarget},
-		})
-		tab, closeTab := newBrowserRoot(t)
-		defer closeTab()
-
-		navigateCoach(t, tab, h.coach.URL)
-		waitForLevelUI(t, tab, assessmentSpanAttribute)
-		waitForReferenceTraceLink(t, tab)
-		assertAssessmentContract(t, tab)
+		waitForCondition(t, tab, `!document.getElementById("assessment-prompt").classList.contains("hidden")`)
+		waitForCondition(t, tab, `document.getElementById("selected-level-title").textContent.includes("Find the Changed Setting")`)
+		waitForCondition(t, tab, `document.getElementById("title").textContent.toLowerCase().includes("setting")`)
 
 		answer := h.waitForSelectedAnswer(t)
 		setSelectValue(t, tab, "#service", answer.Service, false)
 		setSelectValue(t, tab, "#issue", answer.Issue, false)
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "Select the culprit span before submitting.")
+		waitForFeedbackContains(t, tab, "Select the responsible span before submitting.")
 
 		setSelectValue(t, tab, "#selected-span", answer.SpanID, false)
-		waitForCondition(t, tab, `document.querySelector('label[for="selected-attribute"]').textContent.trim() === "Proof tag on culprit span"`)
+		waitForCondition(t, tab, `document.querySelector('label[for="selected-attribute"]').textContent.trim() === "Changed setting on responsible span"`)
 		setSelectValue(t, tab, "#selected-attribute", wrongSelectOptionValue(t, tab, "#selected-attribute", answer.AttributeID), false)
 		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "proof tag is wrong")
-	})
-
-	t.Run("level_5_intermittent_failure", func(t *testing.T) {
-		h := newCoachE2EHarness(t, coachSessionSetup{
-			SelectedLevel: 5,
-			CorrectCounts: map[int]int{1: correctTarget, 2: correctTarget, 3: correctTarget, 4: correctTarget},
-		})
-		tab, closeTab := newBrowserRoot(t)
-		defer closeTab()
-
-		navigateCoach(t, tab, h.coach.URL)
-		waitForLevelUI(t, tab, assessmentIntermittent)
-		assertAssessmentContract(t, tab)
-		waitForCondition(t, tab, `document.getElementById("objective").textContent.trim() === ""`)
-		waitForCondition(t, tab, `document.getElementById("assessment-prompt").classList.contains("hidden")`)
-		waitForCondition(t, tab, `document.getElementById("reference-trace").textContent.includes("to the right")`)
-
-		answer := h.waitForSelectedAnswer(t)
-		setSelectValue(t, tab, "#service", answer.Service, false)
-		setSelectValue(t, tab, "#issue", answer.Issue, false)
-		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "Select every failing trace before submitting.")
-
-		setChecked(t, tab, "failing-trace", answer.FailingTraceIDs[0], true)
-		click(t, tab, "#submit")
-		waitForFeedbackContains(t, tab, "failing traces selection is wrong")
+		waitForFeedbackContains(t, tab, "changed setting is wrong")
 	})
 }
 
@@ -186,7 +135,7 @@ func TestCoachBrowserSkillPlacementModal(t *testing.T) {
 	waitForCondition(t, tab, `document.getElementById("skill-modal-title").textContent.includes("distributed tracing")`)
 
 	click(t, tab, `[data-skill-choice="familiar"]`)
-	waitForSelectedLevel(t, tab, 3)
+	waitForSelectedLevel(t, tab, 2)
 	waitForCondition(t, tab, `!document.getElementById("skill-step-explainer").classList.contains("hidden")`)
 	waitForCondition(t, tab, `document.getElementById("skill-step-explainer").textContent.includes("Move between levels any time")`)
 
@@ -194,7 +143,7 @@ func TestCoachBrowserSkillPlacementModal(t *testing.T) {
 	waitForCondition(t, tab, `document.getElementById("skill-modal").classList.contains("hidden")`)
 
 	reloadPage(t, tab)
-	waitForSelectedLevel(t, tab, 3)
+	waitForSelectedLevel(t, tab, 2)
 	waitForCondition(t, tab, `document.getElementById("skill-modal").classList.contains("hidden")`)
 }
 
@@ -216,7 +165,7 @@ func TestCoachBrowserSharedStateAndProgression(t *testing.T) {
 	waitForLevelUI(t, tabB, assessmentTraceSearchSpan)
 	waitForLevelUI(t, tabC, assessmentTraceSearchSpan)
 	waitForCondition(t, tabA, levelUnlockedExpression(2, true))
-	waitForCondition(t, tabA, levelUnlockedExpression(5, true))
+	waitForCondition(t, tabA, levelUnlockedExpression(3, true))
 
 	for attempt := 1; attempt <= correctTarget; attempt++ {
 		titleBefore := textContent(t, tabA, "#title")
@@ -241,8 +190,8 @@ func TestCoachBrowserSharedStateAndProgression(t *testing.T) {
 	waitForSelectedLevel(t, tabA, 2)
 	waitForSelectedLevel(t, tabB, 2)
 	waitForSelectedLevel(t, tabC, 2)
-	waitForLevelUI(t, tabB, assessmentHealthyFaulty)
-	waitForLevelUI(t, tabC, assessmentHealthyFaulty)
+	waitForLevelUI(t, tabB, assessmentCompareCulprit)
+	waitForLevelUI(t, tabC, assessmentCompareCulprit)
 
 	solveSelectedLevel(t, h, tabB)
 	waitForProgress(t, tabA, "1/5 correct")
@@ -258,7 +207,7 @@ func TestCoachBrowserSharedStateAndProgression(t *testing.T) {
 	answer := h.waitForSelectedAnswer(t)
 	setSelectValue(t, tabA, "#service", answer.Service, false)
 	setSelectValue(t, tabA, "#issue", answer.Issue, false)
-	setTraceRole(t, tabA, answer.FaultyTraceIDs[0], "slow")
+	setSelectValue(t, tabA, "#selected-span", answer.SpanID, false)
 	click(t, tabA, "#next-challenge")
 
 	waitForCondition(t, tabA, fmt.Sprintf(`document.getElementById("title").textContent.trim() !== %q`, titleBefore))
@@ -266,9 +215,9 @@ func TestCoachBrowserSharedStateAndProgression(t *testing.T) {
 	waitForCondition(t, tabC, fmt.Sprintf(`document.getElementById("title").textContent.trim() === %q`, textContent(t, tabA, "#title")))
 	waitForInputValue(t, tabA, "#service", "")
 	waitForInputValue(t, tabA, "#issue", "")
-	waitForCondition(t, tabA, `document.querySelectorAll('select[data-trace-role]').length === 0 || [...document.querySelectorAll('select[data-trace-role]')].every((select) => !select.value)`)
-	waitForCondition(t, tabB, `document.querySelectorAll('select[data-trace-role]').length === 0 || [...document.querySelectorAll('select[data-trace-role]')].every((select) => !select.value)`)
-	waitForCondition(t, tabC, `document.querySelectorAll('select[data-trace-role]').length === 0 || [...document.querySelectorAll('select[data-trace-role]')].every((select) => !select.value)`)
+	waitForCondition(t, tabA, `document.querySelector("#selected-span") === null || !document.querySelector("#selected-span").value`)
+	waitForCondition(t, tabB, `document.querySelector("#selected-span") === null || !document.querySelector("#selected-span").value`)
+	waitForCondition(t, tabC, `document.querySelector("#selected-span") === null || !document.querySelector("#selected-span").value`)
 	waitForFeedbackHidden(t, tabA)
 	waitForFeedbackHidden(t, tabB)
 	waitForFeedbackHidden(t, tabC)
@@ -309,26 +258,26 @@ func TestCoachBrowserLevelReadyModalCanAdvanceToNextLevel(t *testing.T) {
 	waitForLevelReadyModal(t, tab, 1)
 	click(t, tab, "#level-ready-next")
 	waitForSelectedLevel(t, tab, 2)
-	waitForLevelUI(t, tab, assessmentHealthyFaulty)
+	waitForLevelUI(t, tab, assessmentCompareCulprit)
 }
 
 func TestCoachBrowserFinalLevelReadyModalOmitsNextLevel(t *testing.T) {
 	h := newCoachE2EHarness(t, coachSessionSetup{
-		SelectedLevel: 5,
-		CorrectCounts: map[int]int{1: correctTarget, 2: correctTarget, 3: correctTarget, 4: correctTarget},
+		SelectedLevel: 3,
+		CorrectCounts: map[int]int{1: correctTarget, 2: correctTarget},
 	})
 	tab, closeTab := newBrowserRoot(t)
 	defer closeTab()
 
 	navigateCoach(t, tab, h.coach.URL)
-	waitForLevelUI(t, tab, assessmentIntermittent)
+	waitForLevelUI(t, tab, assessmentCompareConfig)
 
 	for attempt := 1; attempt <= correctTarget; attempt++ {
 		solveSelectedLevel(t, h, tab)
 		waitForProgress(t, tab, fmt.Sprintf("%d/%d correct", attempt, correctTarget))
 	}
 
-	waitForLevelReadyModal(t, tab, 5)
+	waitForLevelReadyModal(t, tab, 3)
 }
 
 func TestCoachBrowserRestartReset(t *testing.T) {
@@ -878,11 +827,14 @@ func waitForLevelUI(t *testing.T, ctx context.Context, assessmentType string) {
 		waitForCondition(t, ctx, `document.querySelector("#selected-trace") !== null`)
 	case assessmentCulpritSpan:
 		waitForCondition(t, ctx, `document.querySelector("#selected-span") !== null`)
+	case assessmentCompareCulprit:
+		waitForCondition(t, ctx, `!document.getElementById("service-field").classList.contains("hidden")`)
 	case assessmentHealthyFaulty:
 		waitForCondition(t, ctx, `document.querySelectorAll('select[data-trace-role]').length >= 3`)
 	case assessmentBeforeAfter:
-		waitForCondition(t, ctx, `document.querySelector("#before-trace") !== null`)
-		waitForCondition(t, ctx, `document.querySelector("#after-trace") !== null`)
+		waitForCondition(t, ctx, `!document.getElementById("service-field").classList.contains("hidden")`)
+	case assessmentCompareConfig:
+		waitForCondition(t, ctx, `!document.getElementById("service-field").classList.contains("hidden")`)
 	case assessmentSpanAttribute:
 		waitForCondition(t, ctx, `!document.getElementById("service-field").classList.contains("hidden")`)
 	case assessmentIntermittent:
@@ -920,7 +872,7 @@ func waitForLevelReadyModal(t *testing.T, ctx context.Context, level int) {
 	waitForCondition(t, ctx, `!document.getElementById("level-ready-modal").classList.contains("hidden")`)
 	waitForCondition(t, ctx, fmt.Sprintf(`document.getElementById("level-ready-title").textContent.startsWith(%q)`, fmt.Sprintf("Level %d", level)))
 	waitForCondition(t, ctx, `document.getElementById("level-ready-summary").textContent.includes("5/5 correct")`)
-	if level < 5 {
+	if level < len(levelBlueprints) {
 		waitForCondition(t, ctx, `document.getElementById("level-ready-focus-title").textContent.trim() === "Ready to move on"`)
 		waitForCondition(t, ctx, `document.getElementById("level-ready-copy").textContent.includes("ready for the next level")`)
 		waitForCondition(t, ctx, `!document.getElementById("level-ready-next").classList.contains("hidden")`)
@@ -1001,14 +953,17 @@ func solveSelectedLevel(t *testing.T, h *coachE2EHarness, ctx context.Context) {
 		setSelectValue(t, ctx, "#selected-span", answer.SpanID, false)
 	case assessmentCulpritSpan:
 		setSelectValue(t, ctx, "#selected-span", answer.SpanID, false)
+	case assessmentCompareCulprit:
+		setSelectValue(t, ctx, "#selected-span", answer.SpanID, false)
 	case assessmentHealthyFaulty:
 		for _, id := range answer.FaultyTraceIDs {
 			setTraceRole(t, ctx, id, "slow")
 		}
 		setTraceRole(t, ctx, answer.HealthyTraceID, "healthy")
 	case assessmentBeforeAfter:
-		setSelectValue(t, ctx, "#before-trace", answer.BeforeTraceID, false)
-		setSelectValue(t, ctx, "#after-trace", answer.AfterTraceID, false)
+	case assessmentCompareConfig:
+		setSelectValue(t, ctx, "#selected-span", answer.SpanID, false)
+		setSelectValue(t, ctx, "#selected-attribute", answer.AttributeID, false)
 	case assessmentSpanAttribute:
 		setSelectValue(t, ctx, "#selected-span", answer.SpanID, false)
 		setSelectValue(t, ctx, "#selected-attribute", answer.AttributeID, false)

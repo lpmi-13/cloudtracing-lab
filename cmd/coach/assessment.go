@@ -14,8 +14,10 @@ import (
 const (
 	assessmentTraceSearchSpan = "trace_search_span"
 	assessmentCulpritSpan     = "culprit_span"
+	assessmentCompareCulprit  = "compare_culprit_span"
 	assessmentHealthyFaulty   = "healthy_faulty"
 	assessmentBeforeAfter     = "before_after"
+	assessmentCompareConfig   = "compare_config_change"
 	assessmentSpanAttribute   = "span_attribute"
 	assessmentIntermittent    = "intermittent_failure"
 )
@@ -107,6 +109,17 @@ type traceGroups struct {
 	After   []traceRecord
 }
 
+var compareConfigCatalog = []publicAttributeOption{
+	{ID: "lab.config.inventory_reserve_strategy", Label: "Inventory reserve strategy"},
+	{ID: "lab.config.inventory_batch_size", Label: "Inventory batch size"},
+	{ID: "lab.config.inventory_read_consistency", Label: "Inventory read consistency"},
+	{ID: "lab.config.orders_sort_strategy", Label: "Orders sort strategy"},
+	{ID: "lab.config.orders_history_window_days", Label: "Orders history window"},
+	{ID: "lab.config.orders_page_size", Label: "Orders page size"},
+	{ID: "lab.config.payments_lock_strategy", Label: "Payments lock strategy"},
+	{ID: "lab.config.payments_retry_budget", Label: "Payments retry budget"},
+}
+
 func assessmentShell(def scenario.Definition) publicAssessment {
 	return publicAssessment{
 		Ready:            false,
@@ -129,7 +142,13 @@ func requiredEvidenceFor(def scenario.Definition) []string {
 		return []string{
 			"Select the responsible service.",
 			"Select the failure mode.",
-			"Select the culprit span inside the reference trace.",
+			"Select the responsible span inside the reference trace.",
+		}
+	case assessmentCompareCulprit:
+		return []string{
+			"Select the responsible service.",
+			"Select the failure mode.",
+			"Select the responsible span inside the slower after trace.",
 		}
 	case assessmentHealthyFaulty:
 		return []string{
@@ -147,8 +166,15 @@ func requiredEvidenceFor(def scenario.Definition) []string {
 		return []string{
 			"Select the responsible service.",
 			"Select the failure mode.",
-			"Select the culprit span inside the reference trace.",
-			"Select the proof tag on that culprit span that proves the root cause.",
+			"Select the responsible span inside the reference trace.",
+			"Select the proof tag on that responsible span that proves the root cause.",
+		}
+	case assessmentCompareConfig:
+		return []string{
+			"Select the responsible service.",
+			"Select the failure mode.",
+			"Select the responsible span inside the slower after trace.",
+			"Select the changed setting on that span that you would revert.",
 		}
 	case assessmentIntermittent:
 		return []string{
@@ -169,13 +195,17 @@ func passConditionFor(def scenario.Definition) string {
 	case assessmentTraceSearchSpan:
 		return "Full credit requires the intended slow trace from the prepared search and the correct slow span from that trace."
 	case assessmentCulpritSpan:
-		return "Full credit requires the correct responsible service, failure mode, and culprit span from the reference trace."
+		return "Full credit requires the correct responsible service, failure mode, and responsible span from the reference trace."
+	case assessmentCompareCulprit:
+		return "Full credit requires the correct responsible service, failure mode, and responsible span from the compare investigation."
 	case assessmentHealthyFaulty:
 		return "Full credit requires the correct responsible service, failure mode, all slow traces, and the healthy trace."
 	case assessmentBeforeAfter:
 		return "Full credit requires the correct responsible service and failure mode based on the Jaeger Compare investigation."
 	case assessmentSpanAttribute:
-		return "Full credit requires the correct responsible service, failure mode, culprit span, and proof tag."
+		return "Full credit requires the correct responsible service, failure mode, responsible span, and proof tag."
+	case assessmentCompareConfig:
+		return "Full credit requires the correct responsible service, failure mode, responsible span, and changed setting from the compare investigation."
 	case assessmentIntermittent:
 		return "Full credit requires the correct responsible service, failure mode, and every failing trace from the intermittent set."
 	default:
@@ -188,11 +218,17 @@ func startGuideFor(def scenario.Definition) string {
 	case 1:
 		return "Open the prepared trace search, inspect one slow trace, and pick the slow span."
 	case 2:
+		if def.AssessmentType == assessmentCompareCulprit {
+			return fmt.Sprintf("Open Jaeger Compare for %s, inspect the slower trace, and identify the responsible span.", def.Route)
+		}
 		return "Open the trace links, pick the slow ones, and choose the one healthy trace."
 	case 3:
+		if def.AssessmentType == assessmentCompareConfig {
+			return fmt.Sprintf("Open Jaeger Compare for %s, inspect the slower span, and identify the changed setting to revert.", def.Route)
+		}
 		return fmt.Sprintf("Open Jaeger Compare with one before trace and one after trace for %s.", def.Route)
 	case 4:
-		return fmt.Sprintf("Open the reference trace for %s, find the culprit span, then prove it with one proof tag.", def.Route)
+		return fmt.Sprintf("Open the reference trace for %s, find the responsible span, then prove it with one proof tag.", def.Route)
 	case 5:
 		return fmt.Sprintf("Open the trace links for %s and select the requests that actually fail.", def.Route)
 	default:
@@ -227,6 +263,13 @@ func normalizeBatchPlan(def scenario.Definition, fallbackCount int) scenario.Bat
 		if plan.FaultyCount <= 0 {
 			plan.FaultyCount = max(2, fallbackCount-1)
 		}
+	case assessmentCompareCulprit:
+		if plan.BeforeCount <= 0 {
+			plan.BeforeCount = 2
+		}
+		if plan.AfterCount <= 0 {
+			plan.AfterCount = 2
+		}
 	case assessmentHealthyFaulty:
 		if plan.FaultyCount <= 0 {
 			plan.FaultyCount = 2
@@ -235,6 +278,13 @@ func normalizeBatchPlan(def scenario.Definition, fallbackCount int) scenario.Bat
 			plan.HealthyCount = 1
 		}
 	case assessmentBeforeAfter:
+		if plan.BeforeCount <= 0 {
+			plan.BeforeCount = 2
+		}
+		if plan.AfterCount <= 0 {
+			plan.AfterCount = 2
+		}
+	case assessmentCompareConfig:
 		if plan.BeforeCount <= 0 {
 			plan.BeforeCount = 2
 		}
@@ -322,6 +372,35 @@ func buildPreparedChallenge(
 			ExpectedSpanID: expectedSpanID,
 		}, nil
 
+	case assessmentCompareCulprit:
+		if len(groups.Before) == 0 || len(groups.After) == 0 {
+			return nil, fmt.Errorf("compare trace set incomplete for %s", def.ID)
+		}
+		beforeChoices := traceOptions(groups.Before, traceURL)
+		afterChoices := traceOptions(groups.After, traceURL)
+		choices := append(append([]publicTraceOption{}, beforeChoices...), afterChoices...)
+		cohortIDs := append(append([]string{}, traceIDs(groups.Before)...), traceIDs(groups.After)...)
+
+		reference := groups.After[0]
+		spanChoices := spanChoicesForTrace(def, reference)
+		expectedSpanID := spanChoiceID(def.ExpectedService, def.AnswerKey.SpanOperation)
+		if !containsSpanChoice(spanChoices, expectedSpanID) {
+			return nil, fmt.Errorf("after trace for %s does not include span %q", def.ID, expectedSpanID)
+		}
+
+		public.Ready = true
+		public.TraceChoices = choices
+		public.BeforeTraceChoices = beforeChoices
+		public.AfterTraceChoices = afterChoices
+		public.CompareLink = compareLinkOption(beforeChoices[0].ID, afterChoices[0].ID, cohortIDs, compareURL)
+		public.SpanChoices = spanChoices
+		return &preparedChallenge{
+			Public:                 public,
+			ExpectedSpanID:         expectedSpanID,
+			ExpectedBeforeTraceIDs: traceIDs(groups.Before),
+			ExpectedAfterTraceIDs:  traceIDs(groups.After),
+		}, nil
+
 	case assessmentHealthyFaulty:
 		if len(groups.Faulty) < 2 || len(groups.Healthy) == 0 {
 			return nil, fmt.Errorf("mixed trace set incomplete for %s", def.ID)
@@ -358,6 +437,66 @@ func buildPreparedChallenge(
 			ExpectedAfterTraceIDs:  traceIDs(groups.After),
 		}, nil
 
+	case assessmentCompareConfig:
+		if len(groups.Before) == 0 || len(groups.After) == 0 {
+			return nil, fmt.Errorf("compare trace set incomplete for %s", def.ID)
+		}
+		beforeChoices := traceOptions(groups.Before, traceURL)
+		afterChoices := traceOptions(groups.After, traceURL)
+		choices := append(append([]publicTraceOption{}, beforeChoices...), afterChoices...)
+		cohortIDs := append(append([]string{}, traceIDs(groups.Before)...), traceIDs(groups.After)...)
+
+		reference := groups.After[0]
+		beforeReference := groups.Before[0]
+		spanChoices := spanChoicesForTrace(def, reference)
+		expectedSpanID := spanChoiceID(def.ExpectedService, def.AnswerKey.SpanOperation)
+		if !containsSpanChoice(spanChoices, expectedSpanID) {
+			return nil, fmt.Errorf("after trace for %s does not include span %q", def.ID, expectedSpanID)
+		}
+		if countSpanChoicesForService(spanChoices, def.ExpectedService) < 4 {
+			return nil, fmt.Errorf("after trace for %s exposes fewer than four responsible-span choices for %s", def.ID, def.ExpectedService)
+		}
+		expectedAttributeID := def.AnswerKey.AttributeKey
+		if expectedAttributeID == "" {
+			return nil, fmt.Errorf("no changed setting answer key configured for %s", def.ID)
+		}
+
+		beforeSpan, ok := findSpan(beforeReference, def.ExpectedService, def.AnswerKey.SpanOperation)
+		if !ok {
+			return nil, fmt.Errorf("before trace for %s does not include responsible span %q", def.ID, expectedSpanID)
+		}
+		afterSpan, ok := findSpan(reference, def.ExpectedService, def.AnswerKey.SpanOperation)
+		if !ok {
+			return nil, fmt.Errorf("after trace for %s does not include responsible span %q", def.ID, expectedSpanID)
+		}
+
+		beforeValue := beforeSpan.Tags[expectedAttributeID]
+		afterValue := afterSpan.Tags[expectedAttributeID]
+		if afterValue == "" {
+			return nil, fmt.Errorf("after responsible span for %s does not include changed setting %q", def.ID, expectedAttributeID)
+		}
+		if beforeValue == "" {
+			return nil, fmt.Errorf("before responsible span for %s does not include changed setting %q", def.ID, expectedAttributeID)
+		}
+		if beforeValue == afterValue {
+			return nil, fmt.Errorf("changed setting %q does not differ across the compare boundary for %s", expectedAttributeID, def.ID)
+		}
+
+		public.Ready = true
+		public.TraceChoices = choices
+		public.BeforeTraceChoices = beforeChoices
+		public.AfterTraceChoices = afterChoices
+		public.CompareLink = compareLinkOption(beforeChoices[0].ID, afterChoices[0].ID, cohortIDs, compareURL)
+		public.SpanChoices = spanChoices
+		public.AttributeChoices = compareConfigChoices(expectedAttributeID)
+		return &preparedChallenge{
+			Public:                 public,
+			ExpectedSpanID:         expectedSpanID,
+			ExpectedAttributeID:    expectedAttributeID,
+			ExpectedBeforeTraceIDs: traceIDs(groups.Before),
+			ExpectedAfterTraceIDs:  traceIDs(groups.After),
+		}, nil
+
 	case assessmentSpanAttribute:
 		if len(groups.Faulty) == 0 {
 			return nil, fmt.Errorf("no faulty traces available for %s", def.ID)
@@ -371,7 +510,7 @@ func buildPreparedChallenge(
 
 		culpritSpan, ok := findSpan(reference, def.ExpectedService, def.AnswerKey.SpanOperation)
 		if !ok {
-			return nil, fmt.Errorf("culprit span missing from reference trace for %s", def.ID)
+			return nil, fmt.Errorf("responsible span missing from reference trace for %s", def.ID)
 		}
 		expectedAttributeID := attributeChoiceID(def.AnswerKey.AttributeKey, def.AnswerKey.AttributeValue)
 		if expectedAttributeID == "=" {
@@ -383,7 +522,7 @@ func buildPreparedChallenge(
 		attributeChoicesBySpan := attributeChoicesBySpanForTrace(reference, expectedAttributeID)
 		attributeChoices := attributeChoicesBySpan[expectedSpanID]
 		if _, ok := culpritSpan.Tags[def.AnswerKey.AttributeKey]; def.AnswerKey.AttributeKey != "" && !ok {
-			return nil, fmt.Errorf("culprit span for %s does not include attribute %q", def.ID, def.AnswerKey.AttributeKey)
+			return nil, fmt.Errorf("responsible span for %s does not include attribute %q", def.ID, def.AnswerKey.AttributeKey)
 		}
 		if !containsAttributeChoice(attributeChoices, expectedAttributeID) {
 			return nil, fmt.Errorf("reference trace for %s does not include attribute %q", def.ID, expectedAttributeID)
@@ -449,10 +588,20 @@ func gradeSubmission(def scenario.Definition, challenge *preparedChallenge, req 
 		if serviceOK && issueOK && spanOK {
 			return gradeResult{
 				Pass:    true,
-				Message: "Correct. The responsible service, failure mode, and culprit span all match the reference trace.",
+				Message: "Correct. The responsible service, failure mode, and responsible span all match the reference trace.",
 			}
 		}
 		return gradeResult{Pass: false, Message: culpritSpanFeedback(serviceOK, issueOK, spanOK)}
+
+	case assessmentCompareCulprit:
+		spanOK := req.SelectedSpan == challenge.ExpectedSpanID
+		if serviceOK && issueOK && spanOK {
+			return gradeResult{
+				Pass:    true,
+				Message: "Correct. The responsible service, failure mode, and responsible span match what changed in Jaeger Compare.",
+			}
+		}
+		return gradeResult{Pass: false, Message: compareCulpritFeedback(serviceOK, issueOK, spanOK)}
 
 	case assessmentHealthyFaulty:
 		faultyOK := sameStringSet(req.FaultyTraceIDs, challenge.ExpectedFaultyTraceIDs)
@@ -480,10 +629,21 @@ func gradeSubmission(def scenario.Definition, challenge *preparedChallenge, req 
 		if serviceOK && issueOK && spanOK && attributeOK {
 			return gradeResult{
 				Pass:    true,
-				Message: "Correct. The responsible service, failure mode, culprit span, and proof tag all line up.",
+				Message: "Correct. The responsible service, failure mode, responsible span, and proof tag all line up.",
 			}
 		}
 		return gradeResult{Pass: false, Message: spanAttributeFeedback(serviceOK, issueOK, spanOK, attributeOK)}
+
+	case assessmentCompareConfig:
+		spanOK := req.SelectedSpan == challenge.ExpectedSpanID
+		attributeOK := req.SelectedAttribute == challenge.ExpectedAttributeID
+		if serviceOK && issueOK && spanOK && attributeOK {
+			return gradeResult{
+				Pass:    true,
+				Message: "Correct. The responsible service, failure mode, responsible span, and changed setting all match the compare evidence.",
+			}
+		}
+		return gradeResult{Pass: false, Message: compareConfigFeedback(serviceOK, issueOK, spanOK, attributeOK)}
 
 	case assessmentIntermittent:
 		failingOK := sameStringSet(req.FailingTraceIDs, challenge.ExpectedFailingTraceIDs)
@@ -516,12 +676,22 @@ func traceSearchSpanFeedback(traceOK, spanOK bool) string {
 
 func culpritSpanFeedback(serviceOK, issueOK, spanOK bool) string {
 	if serviceOK && issueOK && !spanOK {
-		return "The responsible service and failure mode are right, but the culprit span is wrong. Reopen the reference trace and identify the specific slow span."
+		return "The responsible service and failure mode are right, but the responsible span is wrong. Reopen the reference trace and identify the specific slow span."
 	}
 	if serviceOK && !issueOK && spanOK {
-		return "The responsible service and culprit span are right, but the failure mode is wrong. Recheck the failure mode before submitting again."
+		return "The responsible service and responsible span are right, but the failure mode is wrong. Recheck the failure mode before submitting again."
 	}
-	return serviceFailureModeFeedback(serviceOK, issueOK) + " The culprit span is also wrong."
+	return serviceFailureModeFeedback(serviceOK, issueOK) + " The responsible span is also wrong."
+}
+
+func compareCulpritFeedback(serviceOK, issueOK, spanOK bool) string {
+	if serviceOK && issueOK && !spanOK {
+		return "The responsible service and failure mode are right, but the responsible span is wrong. Reopen the slower trace in Jaeger Compare and identify the specific slow span."
+	}
+	if serviceOK && !issueOK && spanOK {
+		return "The responsible service and responsible span are right, but the failure mode is wrong. Recheck the failure mode before submitting again."
+	}
+	return serviceFailureModeFeedback(serviceOK, issueOK) + " The responsible span is also wrong."
 }
 
 func mixedTraceFeedback(serviceOK, issueOK, faultyOK, healthyOK bool) string {
@@ -540,13 +710,26 @@ func mixedTraceFeedback(serviceOK, issueOK, faultyOK, healthyOK bool) string {
 func spanAttributeFeedback(serviceOK, issueOK, spanOK, attributeOK bool) string {
 	switch {
 	case serviceOK && issueOK && !spanOK && attributeOK:
-		return "The proof tag is right, but the culprit span is wrong. Reopen the reference trace and identify the exact span carrying that proof."
+		return "The proof tag is right, but the responsible span is wrong. Reopen the reference trace and identify the exact span carrying that proof."
 	case serviceOK && issueOK && spanOK && !attributeOK:
-		return "The responsible service, failure mode, and culprit span are right, but the proof tag is wrong. Choose the tag on that span that most specifically proves the root cause."
+		return "The responsible service, failure mode, and responsible span are right, but the proof tag is wrong. Choose the tag on that span that most specifically proves the root cause."
 	case serviceOK && issueOK:
-		return "The responsible service and failure mode are right, but the culprit span and proof tag are both wrong. Recheck both fields."
+		return "The responsible service and failure mode are right, but the responsible span and proof tag are both wrong. Recheck both fields."
 	default:
-		return serviceFailureModeFeedback(serviceOK, issueOK) + " Recheck the culprit span and proof tag."
+		return serviceFailureModeFeedback(serviceOK, issueOK) + " Recheck the responsible span and proof tag."
+	}
+}
+
+func compareConfigFeedback(serviceOK, issueOK, spanOK, attributeOK bool) string {
+	switch {
+	case serviceOK && issueOK && !spanOK && attributeOK:
+		return "The changed setting is right, but the responsible span is wrong. Reopen the slower trace from Compare and identify the exact span that carries that setting."
+	case serviceOK && issueOK && spanOK && !attributeOK:
+		return "The responsible service, failure mode, and responsible span are right, but the changed setting is wrong. Choose the config tag key on that span whose value changed across the compare boundary."
+	case serviceOK && issueOK:
+		return "The responsible service and failure mode are right, but the responsible span and changed setting are both wrong. Recheck both fields."
+	default:
+		return serviceFailureModeFeedback(serviceOK, issueOK) + " Recheck the responsible span and changed setting."
 	}
 }
 
@@ -686,7 +869,7 @@ func traceSearchSpanChoices(def scenario.Definition, traces []traceRecord, expec
 		if _, ok := expectedTraceSet[trace.ID]; ok {
 			requiredID = expectedSpanID
 		}
-		traceSpanChoices[trace.ID] = rotateSpanChoices(trimSpanChoices(traceSpanChoices[trace.ID], minChoices, requiredID), trace.ID)
+		traceSpanChoices[trace.ID] = arrangeTraceSearchSpanChoices(trimSpanChoices(traceSpanChoices[trace.ID], minChoices, requiredID), requiredID, trace.ID)
 	}
 
 	return traceSpanChoices, nil
@@ -718,6 +901,33 @@ func findSpanChoice(options []publicSpanOption, id string) (publicSpanOption, bo
 	return publicSpanOption{}, false
 }
 
+func arrangeTraceSearchSpanChoices(options []publicSpanOption, requiredID, seed string) []publicSpanOption {
+	shuffled := stableShuffleSpanChoices(options, seed)
+	if len(shuffled) <= 1 || requiredID == "" {
+		return shuffled
+	}
+
+	required, ok := findSpanChoice(shuffled, requiredID)
+	if !ok {
+		return shuffled
+	}
+
+	distractors := make([]publicSpanOption, 0, len(shuffled)-1)
+	for _, option := range shuffled {
+		if option.ID == requiredID {
+			continue
+		}
+		distractors = append(distractors, option)
+	}
+
+	targetIndex := stableChoiceOffset(seed+"|"+requiredID, len(shuffled))
+	arranged := make([]publicSpanOption, 0, len(shuffled))
+	arranged = append(arranged, distractors[:targetIndex]...)
+	arranged = append(arranged, required)
+	arranged = append(arranged, distractors[targetIndex:]...)
+	return arranged
+}
+
 func rotateSpanChoices(options []publicSpanOption, seed string) []publicSpanOption {
 	rotated := append([]publicSpanOption{}, options...)
 	if len(rotated) <= 1 {
@@ -729,6 +939,23 @@ func rotateSpanChoices(options []publicSpanOption, seed string) []publicSpanOpti
 		return rotated
 	}
 	return append(rotated[offset:], rotated[:offset]...)
+}
+
+func stableShuffleSpanChoices(options []publicSpanOption, seed string) []publicSpanOption {
+	shuffled := append([]publicSpanOption{}, options...)
+	if len(shuffled) <= 1 {
+		return shuffled
+	}
+
+	sort.Slice(shuffled, func(i, j int) bool {
+		left := stableHash(seed + "|" + shuffled[i].ID)
+		right := stableHash(seed + "|" + shuffled[j].ID)
+		if left == right {
+			return shuffled[i].ID < shuffled[j].ID
+		}
+		return left < right
+	})
+	return shuffled
 }
 
 func attributeChoicesBySpanForTrace(trace traceRecord, requiredAttributeID string) map[string][]publicAttributeOption {
@@ -782,6 +1009,52 @@ func proofTagLabel(key, value string) string {
 	default:
 		return humanizeAttributeKey(key) + ": " + value
 	}
+}
+
+func compareConfigChoices(expectedID string) []publicAttributeOption {
+	options := append([]publicAttributeOption{}, compareConfigCatalog...)
+	if expectedID != "" && !containsAttributeChoice(options, expectedID) {
+		options = append(options, publicAttributeOption{
+			ID:    expectedID,
+			Label: compareConfigLabel(expectedID),
+		})
+	}
+	return rotateAttributeChoices(options, expectedID)
+}
+
+func compareConfigLabel(id string) string {
+	for _, option := range compareConfigCatalog {
+		if option.ID == id {
+			return option.Label
+		}
+	}
+	label := strings.TrimPrefix(id, "lab.config.")
+	label = strings.ReplaceAll(label, ".", " ")
+	label = strings.ReplaceAll(label, "_", " ")
+	parts := strings.Fields(label)
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		parts[i] = strings.ToUpper(part[:1]) + part[1:]
+	}
+	if len(parts) == 0 {
+		return "Changed setting"
+	}
+	return strings.Join(parts, " ")
+}
+
+func rotateAttributeChoices(options []publicAttributeOption, seed string) []publicAttributeOption {
+	rotated := append([]publicAttributeOption{}, options...)
+	if len(rotated) <= 1 {
+		return rotated
+	}
+
+	offset := stableChoiceOffset(seed, len(rotated))
+	if offset == 0 {
+		return rotated
+	}
+	return append(rotated[offset:], rotated[:offset]...)
 }
 
 func humanizeAttributeKey(key string) string {
@@ -906,6 +1179,16 @@ func containsSpanChoice(options []publicSpanOption, id string) bool {
 		}
 	}
 	return false
+}
+
+func countSpanChoicesForService(options []publicSpanOption, service string) int {
+	count := 0
+	for _, option := range options {
+		if option.Service == service {
+			count++
+		}
+	}
+	return count
 }
 
 func containsAttributeChoice(options []publicAttributeOption, id string) bool {

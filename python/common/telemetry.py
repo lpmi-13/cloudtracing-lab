@@ -52,3 +52,11 @@ def client_span(tracer, name: str, attrs: dict | None = None):
         for key, value in (attrs or {}).items():
             span.set_attribute(key, value)
         yield span
+
+
+@contextmanager
+def work_span(tracer, name: str, attrs: dict | None = None):
+    with tracer.start_as_current_span(name) as span:
+        for key, value in (attrs or {}).items():
+            span.set_attribute(key, value)
+        yield span

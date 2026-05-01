@@ -65,10 +65,8 @@ var levelBlueprints = []struct {
 	Summary string
 }{
 	{Number: 1, Title: "Level 1", Summary: "Find the Slow Span"},
-	{Number: 2, Title: "Level 2", Summary: "Find the Slow Service With Noise"},
-	{Number: 3, Title: "Level 3", Summary: "Respond to an Elevated Latency Alert"},
-	{Number: 4, Title: "Level 4", Summary: "Dig Into the Details"},
-	{Number: 5, Title: "Level 5", Summary: "Find the Intermittent Failure"},
+	{Number: 2, Title: "Level 2", Summary: "Compare Traces to Find the Slow Span"},
+	{Number: 3, Title: "Level 3", Summary: "Find the Changed Setting"},
 }
 
 func buildLevels(defs []scenario.Definition) ([]levelDefinition, error) {
@@ -130,12 +128,12 @@ func validateScenarioDefinition(def scenario.Definition) error {
 	}
 
 	switch def.AssessmentType {
-	case assessmentTraceSearchSpan, assessmentCulpritSpan, assessmentSpanAttribute:
+	case assessmentTraceSearchSpan, assessmentCulpritSpan, assessmentCompareCulprit, assessmentSpanAttribute, assessmentCompareConfig:
 		if def.AnswerKey.SpanOperation == "" {
 			return fmt.Errorf("scenario %q is missing answer key span_operation", def.ID)
 		}
 	}
-	if def.AssessmentType == assessmentSpanAttribute {
+	if def.AssessmentType == assessmentSpanAttribute || def.AssessmentType == assessmentCompareConfig {
 		if def.AnswerKey.AttributeKey == "" && def.AnswerKey.SpanAttributeKey == "" {
 			return fmt.Errorf("scenario %q is missing answer key attribute", def.ID)
 		}

@@ -80,6 +80,16 @@ func (s *ordersServer) history(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fault := app.FaultForRequest(s.scenarios, r, "orders-api")
+	configTags := ordersConfigTags(fault)
+
+	err := app.WorkSpan(ctx, tracer, "orders.history.resolve_window", configTags, func(context.Context) error {
+		return nil
+	})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("resolve history window: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	stmt := "select order_ref, sku, total, status, created_at from orders where user_id = $1 order by created_at desc limit 20"
 	label := "orders.history.load_page"
 	latency := time.Duration(0)
@@ -91,7 +101,7 @@ func (s *ordersServer) history(w http.ResponseWriter, r *http.Request) {
 	}
 
 	orders := make([]orderRecord, 0, 20)
-	err := app.QuerySpan(ctx, tracer, label, stmt, latency, func(ctx context.Context) error {
+	err = app.QuerySpanWithTags(ctx, tracer, label, stmt, latency, configTags, func(ctx context.Context) error {
 		rows, err := s.db.QueryContext(ctx, stmt, userID)
 		if err != nil {
 			return err
@@ -112,5 +122,25 @@ func (s *ordersServer) history(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	err = app.WorkSpan(ctx, tracer, "orders.history.build_response", configTags, func(context.Context) error {
+		return nil
+	})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("build history response: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	app.WriteJSON(w, http.StatusOK, map[string]any{"orders": orders})
+}
+
+func ordersConfigTags(fault scenario.FaultSpec) map[string]string {
+	tags := map[string]string{
+		"lab.config.orders_sort_strategy":       "created_at_desc",
+		"lab.config.orders_history_window_days": "30",
+		"lab.config.orders_page_size":           "20",
+	}
+	if fault.ConfigKey != "" && fault.ConfigValue != "" {
+		tags[fault.ConfigKey] = fault.ConfigValue
+	}
+	return tags
 }

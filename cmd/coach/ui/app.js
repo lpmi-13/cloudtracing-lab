@@ -1,7 +1,7 @@
 const minimumSubmitBusyMs = 700;
-const skillPlacementKey = "cloudtracing.skillPlacement.v1";
-const levelIntroKeyPrefix = "cloudtracing.levelIntro.v1.";
-const levelReadyKeyPrefix = "cloudtracing.levelReady.v1.";
+const skillPlacementKey = "cloudtracing.skillPlacement.v2";
+const levelIntroKeyPrefix = "cloudtracing.levelIntro.v2.";
+const levelReadyKeyPrefix = "cloudtracing.levelReady.v2.";
 const mobileProgressionQuery = window.matchMedia("(max-width: 840px)");
 const levelIntroContent = {
   1: {
@@ -9,20 +9,12 @@ const levelIntroContent = {
     objective: "Practice spotting one slow request and the span that best explains the delay."
   },
   2: {
-    scene: "A teammate says the service feels inconsistent: some requests seem fine, others feel sluggish. Before you jump to a conclusion, you compare several traces to separate healthy requests from regressed ones and look for the pattern the slow traces share.",
-    objective: "Practice classifying mixed traces and identifying the responsible service behind the slow ones."
+    scene: "An alert says latency climbed after a recent change. You compare a healthy trace against a slower one, then follow the slower branch far enough to identify the specific span that now explains the delay.",
+    objective: "Practice using Jaeger Compare to find the responsible span in the slower trace."
   },
   3: {
-    scene: "An alert says latency has climbed after a recent change. You compare a healthy before trace against a slower after trace so you can explain what regressed before the team chases the wrong service.",
-    objective: "Practice responding to an elevated latency alert by using Jaeger Compare to explain what changed."
-  },
-  4: {
-    scene: "You think you know which service is responsible, but now you need evidence strong enough to convince the rest of the team in a review or incident thread. That means finding the exact span and the proof tag on that span that most specifically names the slow work or wait condition.",
-    objective: "Practice proving the root cause with the culprit span and its proof tag instead of relying on a hunch."
-  },
-  5: {
-    scene: "You are helping during an on-call incident where the failure is intermittent. Not every request is broken, and rushing to a conclusion could send the team in the wrong direction. You need to isolate the traces that actually show the failure and identify what they have in common.",
-    objective: "Practice isolating intermittent failures under noisy, ambiguous conditions."
+    scene: "You already know how to explain which service regressed. Now you need to compare the healthy and regressed traces, inspect the slower span, and identify which setting changed so the team knows what to revert.",
+    objective: "Practice using Jaeger Compare and span tags to identify the rollout setting that caused the slowdown."
   }
 };
 
@@ -59,7 +51,7 @@ function renderJaegerLink() {
   const link = document.getElementById("open-jaeger");
   const href = coachState.jaeger_ui_url || "";
   const type = currentAssessment().type;
-  const hidden = !href || type === "trace_search_span" || type === "healthy_faulty" || type === "before_after";
+  const hidden = !href || type === "trace_search_span" || type === "healthy_faulty" || type === "before_after" || type === "compare_culprit_span" || type === "compare_config_change";
 
   link.href = href || "#";
   link.classList.toggle("hidden", hidden);
@@ -778,7 +770,7 @@ function renderAssessmentFields(force) {
         appendNote(shell, "Select the responsible service to load its span choices.");
         break;
       }
-      appendSelect(shell, "selected-span", "Culprit span", spanChoicesForAssessment(assessment), "Select the span");
+      appendSelect(shell, "selected-span", "Responsible span", spanChoicesForAssessment(assessment), "Select the span");
       restoreSelectValue("selected-span", previousState.selectedSpanID);
       break;
     case "healthy_faulty":
@@ -786,18 +778,40 @@ function renderAssessmentFields(force) {
       break;
     case "before_after":
       break;
+    case "compare_culprit_span":
+      if (!selectedServiceValue()) {
+        appendNote(shell, "Select the responsible service to load its span choices.");
+        break;
+      }
+      appendSelect(shell, "selected-span", "Responsible span", spanChoicesForAssessment(assessment), "Select the span");
+      restoreSelectValue("selected-span", previousState.selectedSpanID);
+      break;
     case "span_attribute":
       if (!selectedServiceValue()) {
         appendNote(shell, "Select the responsible service to load its span choices.");
         break;
       }
-      appendSelect(shell, "selected-span", "Culprit span", spanChoicesForAssessment(assessment), "Select the span");
+      appendSelect(shell, "selected-span", "Responsible span", spanChoicesForAssessment(assessment), "Select the span");
       restoreSelectValue("selected-span", previousState.selectedSpanID);
       if (!selectedSpanValue()) {
-        appendNote(shell, "Select the culprit span to load its proof tags.");
+        appendNote(shell, "Select the responsible span to load its proof tags.");
         break;
       }
-      appendSelect(shell, "selected-attribute", "Proof tag on culprit span", attributeChoicesForAssessment(assessment), "Select the proof tag");
+      appendSelect(shell, "selected-attribute", "Proof tag on responsible span", attributeChoicesForAssessment(assessment), "Select the proof tag");
+      restoreSelectValue("selected-attribute", previousState.selectedAttributeID);
+      break;
+    case "compare_config_change":
+      if (!selectedServiceValue()) {
+        appendNote(shell, "Select the responsible service to load its span choices.");
+        break;
+      }
+      appendSelect(shell, "selected-span", "Responsible span", spanChoicesForAssessment(assessment), "Select the span");
+      restoreSelectValue("selected-span", previousState.selectedSpanID);
+      if (!selectedSpanValue()) {
+        appendNote(shell, "Select the responsible span to load the changed-setting choices.");
+        break;
+      }
+      appendSelect(shell, "selected-attribute", "Changed setting on responsible span", assessment.attribute_choices, "Select the changed setting");
       restoreSelectValue("selected-attribute", previousState.selectedAttributeID);
       break;
     case "intermittent_failure":
@@ -836,6 +850,9 @@ function assessmentPayload(assessment) {
     case "culprit_span":
       payload.selected_span = document.getElementById("selected-span")?.value || "";
       break;
+    case "compare_culprit_span":
+      payload.selected_span = document.getElementById("selected-span")?.value || "";
+      break;
     case "healthy_faulty":
       payload.trace_roles = traceRoleSelections();
       payload.faulty_trace_ids = Object.keys(payload.trace_roles).filter((traceID) => payload.trace_roles[traceID] === "slow");
@@ -843,6 +860,10 @@ function assessmentPayload(assessment) {
       payload.healthy_trace_id = payload.healthy_trace_ids.length === 1 ? payload.healthy_trace_ids[0] : "";
       break;
     case "span_attribute":
+      payload.selected_span = document.getElementById("selected-span")?.value || "";
+      payload.selected_attribute = document.getElementById("selected-attribute")?.value || "";
+      break;
+    case "compare_config_change":
       payload.selected_span = document.getElementById("selected-span")?.value || "";
       payload.selected_attribute = document.getElementById("selected-attribute")?.value || "";
       break;
@@ -865,7 +886,8 @@ function validateAssessment(assessment, payload) {
       }
       return payload.selected_span ? "" : "Select the slow span before submitting.";
     case "culprit_span":
-      return payload.selected_span ? "" : "Select the culprit span before submitting.";
+    case "compare_culprit_span":
+      return payload.selected_span ? "" : "Select the responsible span before submitting.";
     case "healthy_faulty":
       if (Object.keys(payload.trace_roles || {}).length < (assessment.trace_choices || []).length) {
         return "Classify every trace before submitting.";
@@ -879,9 +901,14 @@ function validateAssessment(assessment, payload) {
       return payload.faulty_trace_ids.length > 0 ? "" : "Select every slow trace before submitting.";
     case "span_attribute":
       if (!payload.selected_span) {
-        return "Select the culprit span before submitting.";
+        return "Select the responsible span before submitting.";
       }
       return payload.selected_attribute ? "" : "Select the proof tag before submitting.";
+    case "compare_config_change":
+      if (!payload.selected_span) {
+        return "Select the responsible span before submitting.";
+      }
+      return payload.selected_attribute ? "" : "Select the changed setting before submitting.";
     case "intermittent_failure":
       return payload.failing_trace_ids.length > 0 ? "" : "Select every failing trace before submitting.";
     default:
@@ -897,13 +924,14 @@ function render() {
   const assessmentPrompt = document.getElementById("assessment-prompt");
   const levelOneTraceSearch = assessment.type === "trace_search_span";
   const levelTwoHealthyFaulty = assessment.type === "healthy_faulty";
+  const levelTwoCompareCulprit = assessment.type === "compare_culprit_span";
   const levelThreeBeforeAfter = assessment.type === "before_after";
   const levelFiveIntermittent = assessment.type === "intermittent_failure";
 
   document.getElementById("title").textContent = levelOneTraceSearch ? "Find the slow trace and span" : (levelTwoHealthyFaulty ? (current.objective || current.title || "") : (current.title || ""));
-  document.getElementById("objective").textContent = levelOneTraceSearch || levelTwoHealthyFaulty || levelThreeBeforeAfter || levelFiveIntermittent ? "" : (current.objective || "");
+  document.getElementById("objective").textContent = levelOneTraceSearch || levelTwoHealthyFaulty || levelTwoCompareCulprit || levelThreeBeforeAfter || levelFiveIntermittent ? "" : (current.objective || "");
   assessmentPrompt.textContent = assessment.prompt || "";
-  assessmentPrompt.classList.toggle("hidden", assessment.type === "trace_search_span" || assessment.type === "healthy_faulty" || assessment.type === "before_after" || assessment.type === "intermittent_failure" || !assessment.prompt);
+  assessmentPrompt.classList.toggle("hidden", assessment.type === "trace_search_span" || assessment.type === "healthy_faulty" || assessment.type === "compare_culprit_span" || assessment.type === "before_after" || assessment.type === "intermittent_failure" || !assessment.prompt);
   document.getElementById("selected-level-title").textContent = selected ? (selected.title + " • " + selected.summary) : "Level";
   document.getElementById("selected-level-progress").textContent = selected ? (selected.correct_count + "/" + selected.correct_target + " correct") : "";
 
@@ -1076,7 +1104,7 @@ document.getElementById("level-ready-next").addEventListener("click", moveToNext
 document.getElementById("level-ready-close").addEventListener("click", closeLevelReady);
 document.getElementById("service").addEventListener("change", () => {
   const type = currentAssessment().type;
-  if (type === "culprit_span" || type === "span_attribute") {
+  if (type === "culprit_span" || type === "compare_culprit_span" || type === "span_attribute" || type === "compare_config_change") {
     renderAssessmentFields(true);
   }
 });
@@ -1085,7 +1113,7 @@ document.getElementById("assessment-fields").addEventListener("change", (event) 
   if (event.target.id === "selected-trace" && type === "trace_search_span") {
     renderAssessmentFields(true);
   }
-  if (event.target.id === "selected-span" && type === "span_attribute") {
+  if (event.target.id === "selected-span" && (type === "span_attribute" || type === "compare_config_change")) {
     renderAssessmentFields(true);
   }
 });

@@ -75,7 +75,16 @@ func (s *inventoryServer) reserve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fault := app.FaultForRequest(s.scenarios, r, "inventory-api")
+	configTags := inventoryConfigTags(fault)
 	totalAvailable := 0
+
+	err := app.WorkSpan(ctx, tracer, "inventory.reserve.plan_strategy", configTags, func(context.Context) error {
+		return nil
+	})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("plan reserve strategy: %v", err), http.StatusInternalServerError)
+		return
+	}
 
 	switch fault.Mode {
 	case "n_plus_one_queries":
@@ -91,7 +100,7 @@ func (s *inventoryServer) reserve(w http.ResponseWriter, r *http.Request) {
 
 			var quantity int
 			var reserved int
-			err := app.QuerySpan(ctx, tracer, label, stmt, latency, func(ctx context.Context) error {
+			err := app.QuerySpanWithTags(ctx, tracer, label, stmt, latency, configTags, func(ctx context.Context) error {
 				return s.db.QueryRowContext(ctx, stmt, sku, warehouseID).Scan(new(int), &quantity, &reserved)
 			})
 			if err != nil {
@@ -102,7 +111,7 @@ func (s *inventoryServer) reserve(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		stmt := "select coalesce(sum(quantity - reserved), 0) from stock_levels where sku = $1"
-		err := app.QuerySpan(ctx, tracer, "inventory.reserve.check_stock", stmt, 0, func(ctx context.Context) error {
+		err := app.QuerySpanWithTags(ctx, tracer, "inventory.reserve.check_stock", stmt, 0, configTags, func(ctx context.Context) error {
 			return s.db.QueryRowContext(ctx, stmt, sku).Scan(&totalAvailable)
 		})
 		if err != nil {
@@ -111,11 +120,31 @@ func (s *inventoryServer) reserve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	err = app.WorkSpan(ctx, tracer, "inventory.reserve.build_response", configTags, func(context.Context) error {
+		return nil
+	})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("build reserve response: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	app.WriteJSON(w, http.StatusOK, map[string]any{
 		"sku":       sku,
 		"available": totalAvailable,
 		"reserved":  totalAvailable > 0,
 	})
+}
+
+func inventoryConfigTags(fault scenario.FaultSpec) map[string]string {
+	tags := map[string]string{
+		"lab.config.inventory_reserve_strategy": "aggregate_query",
+		"lab.config.inventory_batch_size":       "64",
+		"lab.config.inventory_read_consistency": "session",
+	}
+	if fault.ConfigKey != "" && fault.ConfigValue != "" {
+		tags[fault.ConfigKey] = fault.ConfigValue
+	}
+	return tags
 }
 
 func (s *inventoryServer) availability(w http.ResponseWriter, r *http.Request) {

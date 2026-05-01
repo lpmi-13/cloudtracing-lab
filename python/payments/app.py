@@ -5,7 +5,7 @@ import psycopg
 from flask import Flask, jsonify, request
 
 from python.common.scenarios import fault_for_headers, load_scenarios
-from python.common.telemetry import client_span, init_telemetry, server_span
+from python.common.telemetry import client_span, init_telemetry, server_span, work_span
 
 
 app = Flask(__name__)
@@ -32,23 +32,39 @@ def charge():
         amount = float(request.args.get("amount", "49.95"))
         order_ref = f"pay-{sku}-{int(time.time() * 1000)}"
         fault = fault_for_headers(request.headers, scenarios, "payments-api")
+        config_tags = payments_config_tags(fault)
+
+        with work_span(
+            tracer,
+            "payments.charge.validate_request",
+            config_tags,
+        ):
+            pass
 
         try:
             with connection() as conn:
                 with conn.cursor() as cursor:
                     if fault.get("mode") == "lock_wait_timeout":
+                        attrs = {
+                            "db.system": "postgresql",
+                            "db.statement": fault.get("query_text", "select pg_sleep(1.2)"),
+                            "lab.query_label": fault.get("query_label", "payments.idempotency.ensure_guard"),
+                            "lab.statement_signature": "select pg_sleep(%s)",
+                        }
+                        attrs.update(config_tags)
                         with client_span(
                             tracer,
                             fault.get("query_label", "payments.idempotency.ensure_guard"),
-                            {
-                                "db.system": "postgresql",
-                                "db.statement": fault.get("query_text", "select pg_sleep(1.2)"),
-                                "lab.query_label": fault.get("query_label", "payments.idempotency.ensure_guard"),
-                                "lab.statement_signature": "select pg_sleep(%s)",
-                            },
+                            attrs,
                         ) as span:
                             cursor.execute("select pg_sleep(%s)", (fault.get("latency_ms", 1200) / 1000.0,))
                             span.set_attribute("lab.wait_checkpoint", "payments.idempotency.guard")
+                        with work_span(
+                            tracer,
+                            "payments.charge.map_failure",
+                            config_tags,
+                        ):
+                            pass
                         return jsonify(
                             {
                                 "status": "failed",
@@ -56,6 +72,20 @@ def charge():
                                 "error": "payment authorization timed out while waiting on a database lock",
                             }
                         ), 504
+
+                    guard_attrs = {
+                        "db.system": "postgresql",
+                        "db.statement": "select 1",
+                        "lab.query_label": "payments.idempotency.ensure_guard",
+                        "lab.statement_signature": "select 1",
+                    }
+                    guard_attrs.update(config_tags)
+                    with client_span(
+                        tracer,
+                        "payments.idempotency.ensure_guard",
+                        guard_attrs,
+                    ):
+                        cursor.execute("select 1")
 
                     with client_span(
                         tracer,
@@ -72,10 +102,28 @@ def charge():
                             (order_ref, amount, "captured"),
                         )
                     conn.commit()
+                    with work_span(
+                        tracer,
+                        "payments.charge.map_success",
+                        config_tags,
+                    ):
+                        pass
         except Exception as exc:
             return jsonify({"status": "failed", "reference": order_ref, "error": str(exc)}), 500
 
         return jsonify({"status": "captured", "reference": order_ref, "sku": sku})
+
+
+def payments_config_tags(fault):
+    tags = {
+        "lab.config.payments_lock_strategy": "optimistic_guard",
+        "lab.config.payments_retry_budget": "1",
+    }
+    config_key = fault.get("config_key")
+    config_value = fault.get("config_value")
+    if config_key and config_value:
+        tags[config_key] = config_value
+    return tags
 
 
 if __name__ == "__main__":
