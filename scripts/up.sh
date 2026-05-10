@@ -5,7 +5,12 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
 cd "${repo_root}"
 
+source "${script_dir}/lib/k3s.sh"
+
 coach_ui_autostart="${COACH_UI_AUTOSTART:-1}"
+
+echo "Checking k3s node-IP for drift..."
+repair_k3s_node_ip_if_needed
 
 echo "Tearing down the existing local trace-lab namespace..."
 bash "${script_dir}/down.sh"
