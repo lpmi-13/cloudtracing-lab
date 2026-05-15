@@ -4,9 +4,9 @@ Running at [iximiuz Labs](https://labs.iximiuz.com/playgrounds/cloud-tracing-lab
 
 ![guided UI](./images/coach-ui.png)
 
-This repo scaffolds a deliberate-practice activity for trace-driven incident diagnosis in a realistic local `k3s` environment.
+This repo contains a deliberate-practice lab for trace-driven incident diagnosis in a realistic local `k3s` environment.
 
-The initial MVP is built around:
+The lab is built around:
 
 - direct `localhost` ports for local runs and ingress for generic remote clusters
 - a Python web tier
@@ -14,18 +14,16 @@ The initial MVP is built around:
 - PostgreSQL, Redis, and Meilisearch as the data tier
 - OpenTelemetry for trace generation
 - Jaeger for trace exploration
-- a coach UI that generates traffic, explains the objective, grades learner answers, and advances to the next randomized scenario after a correct diagnosis
+- a three-level coach UI that generates challenge traffic, opens prepared Jaeger searches or comparisons, grades required evidence, tracks 5-correct progress per level, and advances to a new randomized challenge
 
 ## Learning Design
 
-The activity is grounded in the deliberate-practice principles summarized in `/home/adam/projects/deliberate-practice`:
+The activity follows a deliberate-practice shape:
 
-- the skill stays constant: identify the true root-cause component from traces
-- the scenario varies: search, checkout, payment, and order-history flows fail in different ways
-- feedback is immediate: the coach UI grades the suspected service and issue type
-- replay is built in: learners can rotate to a new scenario and repeat the same workflow
-
-The MVP focuses on activity-level deliberate practice. Flame graphs are left as a later extension.
+- the skill stays focused: use traces to identify the span, service, failure mode, and sometimes the changed setting that best explains a regression
+- the scenario varies: search, checkout, payment, and order-history flows fail or slow down in different ways
+- feedback is immediate: the coach grades the exact evidence required by the selected level
+- replay is built in: learners can switch levels, request a new challenge, or keep practicing after reaching 5/5 correct on a level
 
 ## Architecture
 
@@ -39,46 +37,58 @@ Supporting services:
 
 ## Current State
 
-- the learner loop is end to end: the coach picks a scenario, seeds fresh traffic automatically, grades answers, and advances after a correct diagnosis
-- the coach UI now includes lightweight progressive hints that help learners move from the entry span to the next service layer without revealing the answer
+- the learner loop is end to end: the coach prepares a challenge, seeds the relevant traces automatically, grades answers, tracks 5-correct progress for each level, and advances after a correct diagnosis
+- all three levels are available from the coach: Level 1 finds the slow trace and span, Level 2 uses Jaeger Compare to find the responsible span, and Level 3 uses Jaeger Compare plus span tags to identify a changed setting
+- the coach UI includes self-selected starting points, level intro/ready modals, synchronized state across open coach tabs, and lightweight progressive hints
 - the application tier covers four trace patterns: broad search queries, inventory N+1 work, payment lock waits, and expensive order-history sorts
 - the optional shop UI remains available for manual storefront traffic, but the core activity is now coach + Jaeger
 - the local path is `bash scripts/up.sh`, which tears the lab down, rebuilds the local app images, pushes them to the trusted registry, applies the local overlay, waits for rollout, and ensures the coach hot-reload UI is running
 - the remote path is `bash scripts/publish-ghcr.sh` plus `bash scripts/deploy-remote.sh`, or simply `bash scripts/up-remote.sh`
-- the preloaded VM/rootfs path is still available for iximiuz-style playgrounds and fast-start environments
+- the preloaded VM/rootfs path is available for iximiuz-style playgrounds and fast-start environments; the checked-in playground exposes the coach tab publicly and the coach proxies Jaeger at `/jaeger`
 - Jaeger now runs as a pinned backend image plus a separately built, pinned `jaeger-ui` sidecar served by Caddy, so UI updates can land independently of the backend image
 
-## Scenario Types
+## Scenario Catalog
 
 The scenario catalog lives in [scenarios/scenarios.json](/home/adam/projects/cloudtracing/scenarios/scenarios.json).
 
-Initial faults:
+Implemented levels:
 
-- slow search caused by a broad Meilisearch query after a Redis miss
-- slow checkout caused by inventory N+1 queries
-- failing checkout caused by a payment lock-wait timeout
-- slow account history caused by an expensive order-history sort
+- Level 1, `trace_search_span`: pick the slow trace from a prepared Jaeger search, then pick the slow span in that trace. Current variants cover catalog search, inventory checkout, and order history.
+- Level 2, `compare_culprit_span`: open a prepared Jaeger Compare link with healthy and slower traces, then submit the responsible service, failure mode, and widened span. Current variants cover catalog search, inventory checkout, and order history.
+- Level 3, `compare_config_change`: compare healthy and regressed traces, submit the responsible service, failure mode, widened span, and changed `lab.config.*` setting to revert. Current variants cover inventory checkout, order history, and payment checkout.
+
+Current fault patterns:
+
+- `catalog-api`: slow search caused by a broad Meilisearch query after a Redis miss
+- `inventory-api`: slow checkout caused by repeated stock lookup queries
+- `orders-api`: slow account history caused by an expensive order-history sort
+- `payments-api`: failing checkout caused by a payment lock-wait timeout
 
 ## Learner Loop
 
-1. The coach UI picks a scenario at random and automatically seeds five fresh traces into every learner-facing endpoint.
-2. The learner opens Jaeger, filters to the focus service and operation from the coach, and inspects the newest matching trace.
-3. The learner submits the suspected responsible service and issue type in the coach UI.
-4. If the diagnosis is wrong, the current scenario stays in place so the learner can keep inspecting the latest trace or start a new scenario manually.
-5. If the diagnosis is correct, the coach UI immediately advances to a new random scenario and seeds the next batch automatically.
-6. The loop continues until the learner decides to stop.
+1. The coach asks the learner to choose a starting point: Level 1 for one-trace practice, Level 2 for compare-based span diagnosis, or Level 3 for changed-setting diagnosis. All levels remain available from the progression bar.
+2. The selected level loads a random scenario variant and automatically seeds the challenge traces plus background traffic.
+3. The learner opens the prepared trace search or Jaeger Compare link shown by the coach and inspects the supplied evidence.
+4. The learner submits the evidence required by that level. Level 1 requires the slow trace and span; Levels 2 and 3 also require the responsible service and failure mode; Level 3 additionally requires the changed setting.
+5. A correct submission increments that level's progress, loads a new random challenge, and prepares the next evidence batch. Reaching 5/5 marks the level ready to move on, but practice can continue.
+6. The first wrong submission keeps the same challenge in place for another attempt. A second wrong submission rotates to a different scenario variant.
+7. The learner can click `New Challenge` at any time to rotate manually.
 
 ## Repo Layout
 
 - `cmd/coach`: learner UI and grader
+- `cmd/coach/ui`: Vite-served coach frontend assets
 - `cmd/edge`: entry application tier API
 - `services/catalog`: Go catalog service
 - `services/inventory`: Go inventory service
 - `services/orders`: Go orders service
 - `python/web`: Python web tier
 - `python/payments`: Python payments service
+- `scenarios`: level and challenge catalog
 - `db/init`: PostgreSQL schema and seed data
 - `k8s/base`: Kubernetes manifests
+- `k8s/overlays`: local and preloaded-VM deployment overlays
+- `scripts`: local, remote, and rootfs build/deploy workflows
 - `pkg/telemetry`: shared Go OpenTelemetry setup
 - `python/common`: shared Python telemetry and scenario helpers
 
@@ -190,13 +200,13 @@ The local overlay also binds the internal HTTP services to fixed loopback ports 
 
 ## Start The Investigation
 
-1. Open `http://localhost:9000` first and read the active scenario title, objective, and route. The coach seeds five fresh traces across all learner-facing endpoints as soon as the scenario loads.
-2. Open `http://localhost:9002`, set Jaeger to the focus service and operation shown in the coach, and inspect the newest matching trace.
+1. Open `http://127.0.0.1:5173` for the normal local coach UI. If you disabled the Vite dev server, use `http://localhost:9000` instead.
+2. Choose a starting level if the onboarding prompt appears, then use the prepared Jaeger search or Compare link shown by the coach.
 3. Start at the web tier span, then follow the request downstream through `edge-api` into the backing service spans.
-4. Identify the component creating the real slowdown or failure, not just the first upstream service that noticed it. Pay close attention to long database, Redis, or Meilisearch spans.
-5. If you get stuck moving from the entry span into the real suspect branch, use the `Need a hint?` panel in the coach UI for a minimal nudge.
-6. Go back to the coach UI and submit the diagnosis plus whatever evidence the current level requires. If you are wrong, the current scenario stays in place; if you want a fresh batch, click `New Scenario`.
-7. Repeat until you solve it or move to a new scenario.
+4. Identify the component creating the real slowdown or failure, not just the first upstream service that noticed it. Pay close attention to long database, Redis, or Meilisearch spans and `lab.config.*` tags on Level 3.
+5. If you get stuck moving from the entry span into the real suspect branch, use `Show Hint` for a minimal nudge.
+6. Go back to the coach UI and submit the evidence required by the current level. If you want a fresh batch manually, click `New Challenge`.
+7. Repeat until the selected level reaches 5/5 correct or move to a different level whenever the current one is too easy or too hard.
 
 ### What You See in Jaeger
 
@@ -220,7 +230,7 @@ Jaeger now keeps multiple recent activity batches in memory. The coach tags ever
 
 If you want to explore the storefront manually alongside the guided activity, `http://localhost:9001` still exposes search, checkout, and account-history flows, but the coach no longer depends on manual trace generation.
 
-Reloading the coach page does not rotate the activity. The active scenario only changes when the backend advances to the next activity after a correct answer or when you click `New Scenario`.
+Reloading the coach page does not rotate the activity. The active challenge changes after a correct answer, after two wrong attempts on the same challenge, or when you click `New Challenge`.
 
 ## Remote VM Workflow
 
@@ -265,7 +275,7 @@ Notes:
 - If you want the cluster to keep pulling upstream images directly instead of mirroring them into GHCR, set `MIRROR_UPSTREAM_IMAGES=0` for both scripts.
 - If your GHCR packages are private, set `GHCR_PULL_SECRET_NAME`, `GHCR_USERNAME`, and `GHCR_TOKEN` before running `bash scripts/deploy-remote.sh`. The script will create a pull secret in `trace-lab` and attach it to the default service account.
 
-For iximiuz-style VMs where each learner-facing UI gets its own exposed port and iximiuz supplies the public hostname, skip this host-based ingress flow and use the fast-start rootfs path below.
+For iximiuz-style VMs where the playground supplies public port tabs, skip this host-based ingress flow and use the fast-start rootfs path below.
 
 ## Fast-Start Rootfs Image
 
@@ -279,7 +289,7 @@ That path bakes the lab into a k3s-capable filesystem image by:
 - saving all Kubernetes images into a single archive
 - copying the lab manifests into the rootfs image
 - enabling a systemd bootstrap unit that imports the images into k3s containerd and deploys the lab on boot
-- exposing the main learner-facing UIs plus the optional storefront debug UI on fixed VM host ports:
+- exposing the coach, Jaeger, and optional storefront debug UI on fixed VM host ports:
   - coach on `30080`
   - jaeger on `30686`
   - shop on `30081` for manual storefront traffic if you need it
@@ -305,6 +315,6 @@ http://127.0.0.1:30081
 http://127.0.0.1:30686
 ```
 
-For iximiuz, expose coach and Jaeger publicly in the playground manifest, and only expose shop if you want manual storefront debugging available to learners. A starter manifest is included at [playground/iximiuz/manifest.yaml](/home/adam/projects/cloudtracing/playground/iximiuz/manifest.yaml); `scripts/build-rootfs-image.sh` now keeps its OCI image reference aligned with the chosen `ROOTFS_IMAGE`.
+For iximiuz, the checked-in [playground/iximiuz/manifest.yaml](/home/adam/projects/cloudtracing/playground/iximiuz/manifest.yaml) exposes the coach tab publicly. The VM overlay sets `JAEGER_UI_URL=/jaeger`, so Jaeger is available through the coach's reverse proxy without a separate public tab. Expose the direct Jaeger or shop ports only if you want extra debugging tabs available to learners. `scripts/build-rootfs-image.sh` keeps the manifest OCI image reference aligned with the chosen `ROOTFS_IMAGE`.
 
 The bootstrap script lives at [bootstrap-trace-lab.sh](/home/adam/projects/cloudtracing/playground/iximiuz/image/bootstrap-trace-lab.sh), and the in-VM deploy path it calls is [deploy-preloaded-vm.sh](/home/adam/projects/cloudtracing/scripts/deploy-preloaded-vm.sh).
